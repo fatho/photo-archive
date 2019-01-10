@@ -1,0 +1,17 @@
+[package]
+name = "photo-archive"
+version = "0.1.0"
+authors = ["Fabian Thorand <f.thorand@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+chrono = "0.4.6"
+walkdir = "2.2.7"
+
+gtk = "0.5.0"
+gio = "0.5.1"
+
+kamadak-exif = "0.3.1"
+
+log = "0.4.6"
+env_logger = "0.6.0"
