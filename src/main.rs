@@ -28,7 +28,7 @@ mod ui;
 struct TestImageProvider {
 }
 
-impl ui::image_list::ImageProvider for TestImageProvider {
+impl ui::gallery::ImageProvider for TestImageProvider {
     fn image_count(&self) -> u32 {
         1001
     }
@@ -47,9 +47,9 @@ fn build_ui(application: &gtk::Application) {
     });
 
     let main_pane: gtk::Paned = builder.get_object("main_pane").unwrap();
-    let image_list = ui::image_list::ImageList::new(TestImageProvider {});
+    let gallery = ui::gallery::Gallery::new(TestImageProvider {});
 
-    main_pane.add2(image_list.as_ref());
+    main_pane.add2(gallery.as_ref());
 
     window.show_all();
 }

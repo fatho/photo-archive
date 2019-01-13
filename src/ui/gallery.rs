@@ -1,4 +1,4 @@
-//! A widget for displaying a list of images base on a gtk::DrawingArea inside a gtk::ScrolledWindow.
+//! A widget for displaying a gallery of images base on a gtk::DrawingArea inside a gtk::ScrolledWindow.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -12,16 +12,16 @@ use gio::prelude::*;
 use gtk::prelude::*;
 
 #[derive(Clone)]
-pub struct ImageList {
+pub struct Gallery {
     drawing_area: gtk::DrawingArea,
     viewport: gtk::Viewport,
     scrolled_window: gtk::ScrolledWindow,
     provider: Arc<Mutex<ImageProvider>>,
-    properties: Rc<RefCell<ImageListProperties>>,
+    properties: Rc<RefCell<GalleryProperties>>,
 }
 
 #[derive(Clone, Debug)]
-struct ImageListProperties {
+struct GalleryProperties {
     preferred_tile_width: u32,
     preferred_tile_height: u32,
     actual_tile_width: u32,
@@ -34,9 +34,9 @@ struct ImageListProperties {
     num_tiles: u32,
 }
 
-impl ImageListProperties {
+impl GalleryProperties {
     pub fn default() -> Self {
-        ImageListProperties {
+        GalleryProperties {
             preferred_tile_width: 300,
             preferred_tile_height: 200,
             actual_tile_width: 300,
@@ -52,14 +52,14 @@ pub trait ImageProvider {
     fn image_count(&self) -> u32;
 }
 
-impl ImageList {
+impl Gallery {
     pub fn new<T: ImageProvider + 'static>(provider: T) -> Self {
         let this = Self {
             drawing_area: gtk::DrawingArea::new(),
             viewport: gtk::Viewport::new(None, None),
             scrolled_window: gtk::ScrolledWindow::new(None, None),
             provider: Arc::new(Mutex::new(provider)),
-            properties: Rc::new(RefCell::new(ImageListProperties::default())),
+            properties: Rc::new(RefCell::new(GalleryProperties::default())),
         };
 
         this.viewport.add(&this.drawing_area);
@@ -113,11 +113,16 @@ impl ImageList {
     pub fn recompute_size(&self, queue_indirect: bool) {
         self.recompute_tiles();
 
+        let props = self.properties.borrow();
+        let ycount = props.num_rows;
+        let row_height = props.actual_tile_height;
+
         // compute pixel size
         let height = self.drawing_area.get_allocated_height().max(0) as u32;
-        let computed_height = self.get_height();
-        println!("recompute_size, height={}, computed_height={}", height, computed_height);
+        let computed_height = ycount * row_height;
+
         if computed_height != height {
+            // width -1 means: take the whole width of the parent
             self.drawing_area.set_size_request(-1, computed_height as i32);
             if queue_indirect {
                 // Schedule recomputation on message queue, because we cannot request a
@@ -134,16 +139,6 @@ impl ImageList {
                 self.drawing_area.queue_resize();
             }
         }
-    }
-
-    // Utility functions
-
-    fn get_height(&self) -> u32 {
-        let props = self.properties.borrow();
-        let ycount = props.num_rows;
-        let row_height = props.actual_tile_height;
-
-        ycount * row_height
     }
 
     // Event handlers
@@ -203,7 +198,7 @@ impl ImageList {
     }
 }
 
-impl AsRef<gtk::Widget> for ImageList {
+impl AsRef<gtk::Widget> for Gallery {
     fn as_ref(&self) -> &gtk::Widget {
         self.scrolled_window.upcast_ref()
     }

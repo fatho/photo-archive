@@ -1,3 +1,3 @@
 //! UI-specific functionality
 
-pub mod image_list;
+pub mod gallery;
