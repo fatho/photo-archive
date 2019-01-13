@@ -335,9 +335,12 @@ dependencies = [
 name = "photo-archive"
 version = "0.1.0"
 dependencies = [
+ "cairo-rs 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "chrono 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "gdk 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "gio 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "glib 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "gtk 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "kamadak-exif 0.3.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.4.6 (registry+https://github.com/rust-lang/crates.io-index)",

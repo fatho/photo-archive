@@ -1,0 +1,32 @@
+Design decisions:
+  - Photo library has to reside in a single director, but no specific folder structure inside is imposed
+    Reasons:
+      - easy to access photos even without the software
+      - easy to move library to a different location
+      - "importing" is as easy as copying the files to the correct location
+  - Arbitrary kinds of tags (e.g. people, places, but really anything user-defined), arbitrary tag values per kind
+    - values of tags are defined dynamically by assigning them for the first time
+  - Keep reference to raw file around
+  - Allow multiple versions of the same picture (original, post-processed), grouped together
+  - Fast and efficient to use
+
+Main features:
+  Foto store:
+    ☐ decide on a on-disk format
+    ☐ enumerate all photos in store on startup
+    ☐ read metadata
+      ☐ EXIF
+      ☐ XMP (?)
+    ☐ display RAW thumbnail
+    ☐ search for duplicates (how to deal with duplicates?)
+    ☐ allow moving photos around
+
+  Tagging:
+    ☐ manage tag kinds
+    ☐ allow assigning tags to pictures (auto-completion of existing values for the current tag kind)
+    ☐ allow easy (from the usability perspective) and efficient (from the implementation perspective) renaming of tag kinds and values
+
+  Search:
+    ☐ search by tag
+    ☐ search by time
+    ☐ search by location (?)
