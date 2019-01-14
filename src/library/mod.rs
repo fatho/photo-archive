@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 pub mod db;
 pub mod photo;
+pub mod thumb;
 
 #[derive(Debug)]
 pub enum Error {
@@ -10,6 +11,7 @@ pub enum Error {
     Io(std::io::Error),
     PhotoExif(exif::Error),
     Db(db::Error),
+    Image(image::ImageError),
     // LibraryScanError(walkdir::Error),
 }
 
@@ -31,6 +33,12 @@ impl From<db::Error> for Error {
     }
 }
 
+impl From<image::ImageError> for Error {
+    fn from(err: image::ImageError) -> Error {
+        Error::Image(err)
+    }
+}
+
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
@@ -38,6 +46,7 @@ impl std::fmt::Display for Error {
             &Error::Io(ref ioerr) => write!(f, "I/O error: {}", ioerr),
             &Error::PhotoExif(ref exif_error) => write!(f, "EXIF error: {}", exif_error),
             &Error::Db(ref err) => write!(f, "Database error: {}", err),
+            &Error::Image(ref err) => write!(f, "Image error: {}", err),
         }
     }
 }
@@ -80,14 +89,20 @@ impl Library {
             if ! self.db.has_path(relative)? {
                 info!("New photo: {}", relative.to_string_lossy().as_ref());
 
-                // load info
+                // load info, do not fail whole operation on error, just log
                 match photo::Info::load(photo_path) {
                     Ok(info) => {
-
+                        match thumb::Thumbnail::new(photo_path, 300) {
+                            Ok(thumb) => {
+                                self.db.insert(relative, info.created(), &thumb)?;
+                            },
+                            Err(err) => {
+                                error!("Failed to generate thumbnail: {}", err);
+                            }
+                        }
                     },
                     Err(err) => {
-                        // do not fail whole operation here, just log the bad file
-                        warn!("Could not read photo: {}", err);
+                        error!("Could not read photo: {}", err);
                     }
                 }
             }

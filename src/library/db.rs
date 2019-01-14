@@ -6,6 +6,8 @@ use chrono::{DateTime, Utc};
 use rusqlite::Connection;
 use rusqlite::types::ToSql;
 
+use super::thumb::Thumbnail;
+
 #[derive(Debug)]
 pub struct PhotoDatabase {
     conn: Connection,
@@ -53,11 +55,11 @@ impl PhotoDatabase {
         ).map_err(Error)
     }
 
-    pub fn insert<P: AsRef<Path>>(&self, path: P, created: DateTime<Utc>, thumbnail: &[u8]) -> Result<PhotoId> {
+    pub fn insert<P: AsRef<Path>>(&self, path: P, created: DateTime<Utc>, thumbnail: &Thumbnail) -> Result<PhotoId> {
         let created_str = created.to_rfc3339(); // ISO formatted date
         self.conn.execute(
             "INSERT INTO photos(rel_path, created, thumbnail) VALUES (?1, ?2, ?3)",
-            &[&path.as_ref().to_string_lossy().as_ref() as &ToSql, &created_str, &thumbnail])?;
+            &[&path.as_ref().to_string_lossy().as_ref() as &ToSql, &created_str, &thumbnail.as_jpg()])?;
 
         Ok(PhotoId(self.conn.last_insert_rowid()))
     }
@@ -97,7 +99,7 @@ mod migrations {
                 tx.execute("CREATE TABLE photos(
                     id             INTEGER PRIMARY KEY,
                     rel_path       TEXT NOT NULL,
-                    time_created   TEXT NOT NULL,
+                    created        TEXT NOT NULL,
                     thumbnail      BLOB)", NO_PARAMS)?;
                 tx.execute("CREATE UNIQUE INDEX photos_rel_path_index ON photos(rel_path)", NO_PARAMS)?;
                 Ok(())

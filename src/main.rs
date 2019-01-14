@@ -7,6 +7,7 @@ extern crate glib;
 extern crate gtk;
 extern crate gio;
 
+extern crate image;
 extern crate exif;
 extern crate rusqlite;
 
@@ -14,7 +15,6 @@ extern crate rusqlite;
 extern crate log;
 extern crate env_logger;
 
-use std::io::{self, Read};
 use std::path::Path;
 
 use gio::prelude::*;
@@ -63,7 +63,7 @@ fn main() {
 
     let photo_root = Path::new("/home/fatho/Pictures");
     let photo_lib = library::Library::open(photo_root).unwrap();
-    photo_lib.refresh();
+    photo_lib.refresh().unwrap();
 
     let application = gtk::Application::new("me.thorand.photo-archive", gio::ApplicationFlags::empty())
         .expect("Initialization failed...");
