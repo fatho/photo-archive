@@ -8,6 +8,7 @@ extern crate gtk;
 extern crate gio;
 
 extern crate exif;
+extern crate rusqlite;
 
 #[macro_use]
 extern crate log;
@@ -55,7 +56,15 @@ fn build_ui(application: &gtk::Application) {
 }
 
 fn main() {
-    env_logger::init();
+    env_logger::init_from_env(env_logger::Env::new()
+        .filter("PHOTO_LIBRARY_LOG")
+        .write_style("PHOTO_LIBRARY_LOG_STYLE")
+    );
+
+    let photo_root = Path::new("/home/fatho/Pictures");
+    let photo_lib = library::Library::open(photo_root).unwrap();
+    photo_lib.refresh();
+
     let application = gtk::Application::new("me.thorand.photo-archive", gio::ApplicationFlags::empty())
         .expect("Initialization failed...");
 

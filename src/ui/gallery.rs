@@ -103,6 +103,7 @@ impl Gallery {
         props.tiles_per_row = xcount;
         props.num_rows = ycount + extras;
 
+        // divide additional horizontal space across all tiles and expand vertically accordingly.
         let extra_space = width.saturating_sub(xcount * props.preferred_tile_width);
         let per_tile_extra = extra_space / xcount;
 
