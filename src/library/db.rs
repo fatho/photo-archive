@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension, NO_PARAMS};
 use rusqlite::types::ToSql;
 
 use super::thumb::Thumbnail;
@@ -31,7 +31,7 @@ impl std::fmt::Display for Error {
 type Result<T> = std::result::Result<T, Error>;
 
 /// Key for uniquely identifying a photo.
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct PhotoId(i64);
 
 impl PhotoDatabase {
@@ -62,6 +62,20 @@ impl PhotoDatabase {
             &[&path.as_ref().to_string_lossy().as_ref() as &ToSql, &created_str, &thumbnail.as_jpg()])?;
 
         Ok(PhotoId(self.conn.last_insert_rowid()))
+    }
+
+    pub fn all_photos(&self) -> Result<std::vec::Vec<PhotoId>> {
+        let mut stmt = self.conn.prepare("SELECT id FROM photos ORDER BY created DESC")?;
+        let ls: rusqlite::Result<std::vec::Vec<PhotoId>> = stmt.query_map(NO_PARAMS, |row| PhotoId(row.get(0)))?.collect();
+        ls.map_err(Error)
+    }
+
+    pub fn get_thumbnail(&self, photo: PhotoId) -> Result<Option<Thumbnail>> {
+        self.conn.query_row(
+            "SELECT thumbnail FROM photos WHERE id = ?1",
+            &[photo.0],
+            |row| Thumbnail::from_jpg(row.get(0))
+        ).optional().map_err(Error)
     }
 }
 

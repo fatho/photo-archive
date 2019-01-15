@@ -8,7 +8,7 @@ pub struct Thumbnail(std::vec::Vec<u8>);
 
 impl Thumbnail {
     /// Generate a thumbnail image where the longest side has at most the given size.
-    pub fn new<P: AsRef<Path>>(original_file: P, size: u32) -> super::Result<Thumbnail> {
+    pub fn generate<P: AsRef<Path>>(original_file: P, size: u32) -> super::Result<Thumbnail> {
         let img = image::open(original_file)?;
 
         let width = img.width();
@@ -26,8 +26,16 @@ impl Thumbnail {
         Ok(Thumbnail(jpg))
     }
 
+    pub fn from_jpg(data: std::vec::Vec<u8>) -> Self {
+        Thumbnail(data)
+    }
+
     /// Return a JPG encoded version of the thumbnail.
     pub fn as_jpg(&self) -> &[u8] {
         self.0.as_ref()
+    }
+
+    pub fn into_raw(self) -> std::vec::Vec<u8> {
+        self.0
     }
 }

@@ -1,6 +1,7 @@
 //! A widget for displaying a gallery of images base on a gtk::DrawingArea inside a gtk::ScrolledWindow.
 
 use std::cell::RefCell;
+use std::ops::Deref;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 
@@ -11,13 +12,24 @@ use gtk;
 use gio::prelude::*;
 use gtk::prelude::*;
 
-#[derive(Clone)]
-pub struct Gallery {
+pub struct Gallery<T> {
     drawing_area: gtk::DrawingArea,
     viewport: gtk::Viewport,
     scrolled_window: gtk::ScrolledWindow,
-    provider: Arc<Mutex<ImageProvider>>,
     properties: Rc<RefCell<GalleryProperties>>,
+    provider: Rc<T>,
+}
+
+impl<T> Clone for Gallery<T> {
+    fn clone(&self) -> Self {
+        Self {
+            drawing_area: self.drawing_area.clone(),
+            viewport: self.viewport.clone(),
+            scrolled_window: self.scrolled_window.clone(),
+            properties: self.properties.clone(),
+            provider: self.provider.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -50,15 +62,17 @@ impl GalleryProperties {
 
 pub trait ImageProvider {
     fn image_count(&self) -> u32;
+
+    fn get_image(&self, index: u32) -> cairo::ImageSurface;
 }
 
-impl Gallery {
-    pub fn new<T: ImageProvider + 'static>(provider: T) -> Self {
+impl<T> Gallery<T> where T: ImageProvider + 'static {
+    pub fn new(provider: T) -> Self {
         let this = Self {
             drawing_area: gtk::DrawingArea::new(),
             viewport: gtk::Viewport::new(None, None),
             scrolled_window: gtk::ScrolledWindow::new(None, None),
-            provider: Arc::new(Mutex::new(provider)),
+            provider: Rc::new(provider),
             properties: Rc::new(RefCell::new(GalleryProperties::default())),
         };
 
@@ -84,7 +98,7 @@ impl Gallery {
         // number of tiles per row
         {
             let mut props = self.properties.borrow_mut();
-            props.num_tiles = self.provider.lock().unwrap().image_count();
+            props.num_tiles = self.provider.image_count();
         }
 
         self.recompute_size(false);
@@ -155,23 +169,19 @@ impl Gallery {
 
         // size of the drawn images
         let props = self.properties.borrow();
-        let img_width = props.actual_tile_width as f64;
-        let img_height = props.actual_tile_height as f64;
+        let tile_width = props.actual_tile_width as f64;
+        let tile_height = props.actual_tile_height as f64;
 
         // number of tiles to render
         let xcount = props.tiles_per_row;
         let ycount = props.num_rows;
         let last_y_xcount = props.num_tiles % xcount;
 
-        let x_idx_start = (clip_start_x / img_width).floor() as u32;
-        let x_idx_end = ((clip_end_x / img_width).ceil() as u32).min(xcount);
+        let x_idx_start = (clip_start_x / tile_width).floor() as u32;
+        let x_idx_end = ((clip_end_x / tile_width).ceil() as u32).min(xcount);
 
-        let y_idx_start = (clip_start_y / img_height).floor() as u32;
-        let y_idx_end = ((clip_end_y / img_height).ceil() as u32).min(ycount);
-
-        // placeholder draw style
-        context.set_source_rgba(1.0, 0.0, 0.0, 1.0);
-        context.set_line_width(2.0);
+        let y_idx_start = (clip_start_y / tile_height).floor() as u32;
+        let y_idx_end = ((clip_end_y / tile_height).ceil() as u32).min(ycount);
 
         for y in y_idx_start..y_idx_end {
             let cur_xcount = if y < ycount - 1 {
@@ -181,17 +191,51 @@ impl Gallery {
             };
 
             for x in x_idx_start..cur_xcount.min(x_idx_end) {
-                // draw a placeholder
+                // draw a frame
+                context.set_source_rgba(1.0, 0.0, 0.0, 1.0);
+                context.set_line_width(2.0);
                 let (fx, fy) = (x as f64, y as f64);
-                context.move_to(fx * img_width, fy * img_height);
-                context.line_to(fx * img_width + img_width, fy * img_height);
-                context.line_to(fx * img_width + img_width, fy * img_height + img_height);
-                context.line_to(fx * img_width, fy * img_height + img_height);
-                context.move_to(fx * img_width, fy * img_height);
+                context.move_to(fx * tile_width, fy * tile_height);
+                context.line_to(fx * tile_width + tile_width, fy * tile_height);
+                context.line_to(fx * tile_width + tile_width, fy * tile_height + tile_height);
+                context.line_to(fx * tile_width, fy * tile_height + tile_height);
+                context.move_to(fx * tile_width, fy * tile_height);
                 context.stroke();
-                context.move_to(fx * img_width + img_width / 2.0, fy * img_height + img_height / 2.0);
-                let s = format!("x: {} y: {} idx: {}", x, y, y * xcount + x);
-                context.show_text(s.as_ref());
+                //context.move_to(fx * img_width + img_width / 2.0, fy * img_height + img_height / 2.0);
+
+                let index = y * xcount + x;
+                //let s = format!("x: {} y: {} idx: {}", x, y, y * xcount + x);
+                //context.show_text(s.as_ref());
+
+                // draw the image
+                let surf = self.provider.get_image(index);
+                let img_width = surf.get_width() as f64;
+                let img_height = surf.get_height() as f64;
+                if img_height <= tile_height && img_width <= tile_width {
+                    let target_x = fx * tile_width + (tile_width - img_width) / 2.0;
+                    let target_y = fy * tile_height + (tile_height - img_height) / 2.0;
+                    context.set_source_surface(&*surf, target_x, target_y);
+                    context.paint()
+                } else {
+                    context.save();
+                    if img_width / img_height >= tile_width / tile_height {
+                        // fit width
+                        let scale = tile_width / img_width;
+                        let target_y = fy * tile_height + (tile_height - img_height * scale) / 2.0;
+
+                        context.set_source_surface(&*surf, fx * tile_width, target_y);
+                        context.scale(scale, scale);
+                    } else {
+                        // fit height
+                        let scale = tile_height / img_height;
+                        let target_x = fx * tile_width + (tile_width - img_width * scale) / 2.0;
+
+                        context.scale(scale, scale);
+                        context.set_source_surface(&*surf, target_x / scale, fy * tile_height / scale);
+                    }
+                    context.paint();
+                    context.restore();
+                }
             }
         }
 
@@ -199,7 +243,7 @@ impl Gallery {
     }
 }
 
-impl AsRef<gtk::Widget> for Gallery {
+impl<T> AsRef<gtk::Widget> for Gallery<T> {
     fn as_ref(&self) -> &gtk::Widget {
         self.scrolled_window.upcast_ref()
     }

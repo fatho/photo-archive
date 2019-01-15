@@ -1,20 +1,23 @@
 extern crate chrono;
+extern crate lru;
+extern crate rusqlite;
 extern crate walkdir;
 
 extern crate cairo;
 extern crate gdk;
+extern crate gdk_pixbuf;
 extern crate glib;
 extern crate gtk;
 extern crate gio;
 
 extern crate image;
 extern crate exif;
-extern crate rusqlite;
 
 #[macro_use]
 extern crate log;
 extern crate env_logger;
 
+use std::rc::Rc;
 use std::path::Path;
 
 use gio::prelude::*;
@@ -25,13 +28,49 @@ mod library;
 mod util;
 mod ui;
 
-
 struct TestImageProvider {
+    cache: std::cell::RefCell<lru::LruCache<u32, cairo::ImageSurface>>,
+}
+
+impl TestImageProvider {
+    pub fn new() -> Self {
+        Self {
+            cache: std::cell::RefCell::new(lru::LruCache::new(50)),
+        }
+    }
 }
 
 impl ui::gallery::ImageProvider for TestImageProvider {
     fn image_count(&self) -> u32 {
         1001
+    }
+
+    fn get_image(&self, index: u32) -> cairo::ImageSurface {
+        let mut cache = self.cache.borrow_mut();
+        if let Some(value) = cache.get(&index) {
+            debug!("Retrieved image {} from cache", index);
+            value.clone()
+        } else {
+            debug!("Generating image {}", index);
+            let (sw, sh) = (500, 500);
+            let surf = cairo::ImageSurface::create(cairo::Format::Rgb24, sw, sh).unwrap();
+
+            let context = cairo::Context::new(&surf);
+            let s = format!("Image #{}", index);
+            let ext = context.text_extents(&s);
+            let x = (sw as f64 - ext.width) / 2.0;
+            let y = sh as f64 / 2.0;
+            context.set_source_rgb(0.0, 0.0, 0.0);
+            context.paint();
+            context.set_font_size(30.0);
+            context.set_source_rgb(0.9, 0.9, 0.9);
+            context.move_to(x.floor(), y.floor());
+            context.show_text(&s);
+            drop(context);
+
+            cache.put(index, surf.clone());
+            surf
+        }
     }
 }
 
@@ -48,7 +87,14 @@ fn build_ui(application: &gtk::Application) {
     });
 
     let main_pane: gtk::Paned = builder.get_object("main_pane").unwrap();
-    let gallery = ui::gallery::Gallery::new(TestImageProvider {});
+
+    let photo_root = Path::new("/home/fatho/Pictures");
+    let photo_lib = library::Library::open(photo_root).unwrap();
+    photo_lib.refresh().unwrap();
+    let photo_db = std::sync::Arc::new(photo_lib.into_db());
+
+    let gallery = ui::gallery::Gallery::new(ui::dbprovider::DbImageProvider::new(photo_db));
+    // let gallery = ui::gallery::Gallery::new(TestImageProvider::new());
 
     main_pane.add2(gallery.as_ref());
 
@@ -60,10 +106,6 @@ fn main() {
         .filter("PHOTO_LIBRARY_LOG")
         .write_style("PHOTO_LIBRARY_LOG_STYLE")
     );
-
-    let photo_root = Path::new("/home/fatho/Pictures");
-    let photo_lib = library::Library::open(photo_root).unwrap();
-    photo_lib.refresh().unwrap();
 
     let application = gtk::Application::new("me.thorand.photo-archive", gio::ApplicationFlags::empty())
         .expect("Initialization failed...");

@@ -92,7 +92,7 @@ impl Library {
                 // load info, do not fail whole operation on error, just log
                 match photo::Info::load(photo_path) {
                     Ok(info) => {
-                        match thumb::Thumbnail::new(photo_path, 300) {
+                        match thumb::Thumbnail::generate(photo_path, 300) {
                             Ok(thumb) => {
                                 self.db.insert(relative, info.created(), &thumb)?;
                             },
@@ -108,6 +108,11 @@ impl Library {
             }
             Ok(())
         })
+    }
+
+    // only for testing purposes
+    pub fn into_db(self) -> db::PhotoDatabase {
+        self.db
     }
 }
 
