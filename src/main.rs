@@ -23,6 +23,7 @@ use std::path::Path;
 use gio::prelude::*;
 use gtk::prelude::*;
 
+mod adapters;
 mod library;
 #[macro_use]
 mod util;
@@ -88,13 +89,13 @@ fn build_ui(application: &gtk::Application) {
 
     let main_pane: gtk::Paned = builder.get_object("main_pane").unwrap();
 
+    // TODO: make library path configurable
     let photo_root = Path::new("/home/fatho/Pictures");
     let photo_lib = library::Library::open(photo_root).unwrap();
     photo_lib.refresh().unwrap();
-    let photo_db = std::sync::Arc::new(photo_lib.into_db());
+    let arc_photo_lib = std::sync::Arc::new(photo_lib);
 
-    let gallery = ui::gallery::Gallery::new(ui::dbprovider::DbImageProvider::new(photo_db));
-    // let gallery = ui::gallery::Gallery::new(TestImageProvider::new());
+    let gallery = ui::gallery::Gallery::new(adapters::image_provider::LibImageProvider::new(arc_photo_lib));
 
     main_pane.add2(gallery.as_ref());
 

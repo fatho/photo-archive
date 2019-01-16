@@ -110,9 +110,10 @@ impl Library {
         })
     }
 
-    // only for testing purposes
-    pub fn into_db(self) -> db::PhotoDatabase {
-        self.db
+    /// Gain access to the underlying photo database.
+    #[inline(always)]
+    pub fn db(&self) -> &db::PhotoDatabase {
+        &self.db
     }
 }
 

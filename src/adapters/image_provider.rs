@@ -1,24 +1,25 @@
 //! ImageProvider for the image database.
 
 use crate::ui::gallery::ImageProvider;
-use crate::library::db;
+use crate::library::Library;
+use crate::library::db::{PhotoId};
 
 use std::vec::Vec;
 use std::sync::{Arc};
 use image::GenericImageView;
 use gdk::ContextExt;
 
-pub struct DbImageProvider {
-    photo_db: Arc<db::PhotoDatabase>,
-    visible_photos: Vec<db::PhotoId>,
+pub struct LibImageProvider {
+    library: Arc<Library>,
+    visible_photos: Vec<PhotoId>,
     thumb_cache: std::cell::RefCell<lru::LruCache<u32, cairo::ImageSurface>>,
 }
 
-impl DbImageProvider {
-    pub fn new(db: Arc<db::PhotoDatabase>) -> Self {
-        let photos = db.all_photos().unwrap();
-        Self {
-            photo_db: db,
+impl LibImageProvider {
+    pub fn new(library: Arc<Library>) -> Self {
+        let photos = library.db().all_photos().unwrap();
+        LibImageProvider {
+            library: library,
             visible_photos: photos,
             thumb_cache: std::cell::RefCell::new(lru::LruCache::new(200)),
         }
@@ -33,7 +34,7 @@ impl DbImageProvider {
     }
 }
 
-impl ImageProvider for DbImageProvider {
+impl ImageProvider for LibImageProvider {
     fn image_count(&self) -> u32 {
         self.visible_photos.len() as u32
     }
@@ -51,7 +52,7 @@ impl ImageProvider for DbImageProvider {
         } else {
             debug!("Loading thumbnail {:?}", photo);
 
-            if let Some(thumb) = self.photo_db.get_thumbnail(photo).unwrap() {
+            if let Some(thumb) = self.library.db().get_thumbnail(photo).unwrap() {
                 if let Ok(img) = image::load_from_memory(thumb.as_jpg()) {
                     let width = img.width();
                     let height = img.height();
