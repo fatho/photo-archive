@@ -62,6 +62,7 @@ impl ImageProvider for DbImageProvider {
                     context.set_source_pixbuf(&pb, 0.0, 0.0);
                     context.paint();
                     drop(context);
+                    cache.put(index, surf.clone());
                     return surf
                 }
             }
