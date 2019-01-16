@@ -44,6 +44,11 @@ struct GalleryProperties {
     num_rows: u32,
     /// total number of tiles
     num_tiles: u32,
+    /// New value to which the scrollbar value should be set on the next resize event.
+    /// The reason is that the first resize event is used to recompute the new height,
+    /// which then causes a second resize event. And only in the second event has the
+    /// scrollbar been updated by the ScrolledWindow container.
+    scrollbar_adjust: Option<f64>,
 }
 
 impl GalleryProperties {
@@ -56,6 +61,7 @@ impl GalleryProperties {
             tiles_per_row: 1,
             num_rows: 0,
             num_tiles: 0,
+            scrollbar_adjust: None,
         }
     }
 }
@@ -128,7 +134,7 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
     pub fn recompute_size(&self, queue_indirect: bool) {
         self.recompute_tiles();
 
-        let props = self.properties.borrow();
+        let mut props = self.properties.borrow_mut();
         let ycount = props.num_rows;
         let row_height = props.actual_tile_height;
 
@@ -139,6 +145,11 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
         if computed_height != height {
             // width -1 means: take the whole width of the parent
             self.drawing_area.set_size_request(-1, computed_height as i32);
+            // adjust scrollbar
+            props.scrollbar_adjust = self.scrolled_window.get_vadjustment()
+                .map(|adj| adj.get_value() * computed_height as f64 / height as f64);
+            debug!("Queuing scrollbar adjustment {:?}", &props.scrollbar_adjust);
+
             if queue_indirect {
                 // Schedule recomputation on message queue, because we cannot request a
                 // recomputation while a resize operation is still going on.
@@ -152,6 +163,13 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
                 });
             } else {
                 self.drawing_area.queue_resize();
+            }
+        } else {
+            if let Some(new_value) = props.scrollbar_adjust.take() {
+                if let Some(adj) = self.scrolled_window.get_vadjustment() {
+                    debug!("Performing scrollbar adjustment to {}/{}", new_value, adj.get_upper());
+                    adj.set_value(new_value);
+                }
             }
         }
     }
@@ -167,16 +185,21 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
         // extract the area that needs to be redrawn
         let (clip_start_x, clip_start_y, clip_end_x, clip_end_y) = context.clip_extents();
 
+        // clear background
+        context.set_source_rgb(1.0, 1.0, 1.0);
+        context.paint();
+
         // size of the drawn images
         let props = self.properties.borrow();
         let tile_width = props.actual_tile_width as f64;
         let tile_height = props.actual_tile_height as f64;
 
-        // number of tiles to render
+        // layout of tiles to render
         let xcount = props.tiles_per_row;
         let ycount = props.num_rows;
         let last_y_xcount = props.num_tiles % xcount;
 
+        // determine which tiles have to be redrawn
         let x_idx_start = (clip_start_x / tile_width).floor() as u32;
         let x_idx_end = ((clip_end_x / tile_width).ceil() as u32).min(xcount);
 
@@ -191,21 +214,8 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
             };
 
             for x in x_idx_start..cur_xcount.min(x_idx_end) {
-                // draw a frame
-                context.set_source_rgba(1.0, 0.0, 0.0, 1.0);
-                context.set_line_width(2.0);
                 let (fx, fy) = (x as f64, y as f64);
-                context.move_to(fx * tile_width, fy * tile_height);
-                context.line_to(fx * tile_width + tile_width, fy * tile_height);
-                context.line_to(fx * tile_width + tile_width, fy * tile_height + tile_height);
-                context.line_to(fx * tile_width, fy * tile_height + tile_height);
-                context.move_to(fx * tile_width, fy * tile_height);
-                context.stroke();
-                //context.move_to(fx * img_width + img_width / 2.0, fy * img_height + img_height / 2.0);
-
                 let index = y * xcount + x;
-                //let s = format!("x: {} y: {} idx: {}", x, y, y * xcount + x);
-                //context.show_text(s.as_ref());
 
                 // draw the image
                 let surf = self.provider.get_image(index);
@@ -214,6 +224,7 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
                 if img_height <= tile_height && img_width <= tile_width {
                     let target_x = fx * tile_width + (tile_width - img_width) / 2.0;
                     let target_y = fy * tile_height + (tile_height - img_height) / 2.0;
+                    trace!("Render {} unscaled", index);
                     context.set_source_surface(&*surf, target_x, target_y);
                     context.paint()
                 } else {
@@ -221,13 +232,15 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
                     if img_width / img_height >= tile_width / tile_height {
                         // fit width
                         let scale = tile_width / img_width;
+                        trace!("Fit {} to width, scale={}", index, scale);
                         let target_y = fy * tile_height + (tile_height - img_height * scale) / 2.0;
 
-                        context.set_source_surface(&*surf, fx * tile_width, target_y);
                         context.scale(scale, scale);
+                        context.set_source_surface(&*surf, fx * tile_width / scale, target_y / scale);
                     } else {
                         // fit height
                         let scale = tile_height / img_height;
+                        trace!("Fit {} to height, scale={}", index, scale);
                         let target_x = fx * tile_width + (tile_width - img_width * scale) / 2.0;
 
                         context.scale(scale, scale);

@@ -46,15 +46,16 @@ impl ImageProvider for DbImageProvider {
         let photo = self.visible_photos[index as usize];
         let mut cache = self.thumb_cache.borrow_mut();
         if let Some(value) = cache.get(&index) {
-            debug!("Retrieved image {:?} from cache", photo);
+            debug!("Retrieved thumbnail {:?} from cache", photo);
             value.clone()
         } else {
-            debug!("Generating image {:?}", photo);
+            debug!("Loading thumbnail {:?}", photo);
 
             if let Some(thumb) = self.photo_db.get_thumbnail(photo).unwrap() {
                 if let Ok(img) = image::load_from_memory(thumb.as_jpg()) {
                     let width = img.width();
                     let height = img.height();
+                    debug!("Thumbnail size: {}x{}", width, height);
                     let pb = gdk_pixbuf::Pixbuf::new_from_vec(img.to_rgb().into_raw(), gdk_pixbuf::Colorspace::Rgb, false, 8, width as i32, height as i32, width as i32 * 3);
 
                     let surf = cairo::ImageSurface::create(cairo::Format::Rgb24, width as i32, height as i32).unwrap();
