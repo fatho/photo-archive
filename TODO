@@ -12,21 +12,72 @@ Design decisions:
 
 Main features:
   Foto store:
-    ☐ decide on a on-disk format
-    ☐ enumerate all photos in store on startup
-    ☐ read metadata
-      ☐ EXIF
+    ✔ decide on a on-disk format @done
+    ✔ enumerate all photos in store on startup @done
+    ✔ read metadata
+      ☐ EXIF @started
       ☐ XMP (?)
-    ☐ display RAW thumbnail
+    ☐ write metadata (e.g. changed EXIF tags)
     ☐ search for duplicates (how to deal with duplicates?)
     ☐ allow moving photos around
+    ☐ support RAW files
+    ☐ link between images
+
+  Gallery-Widget:
+    ✔ display photos fast @done
+    ✔ nice scrolling @done
+    ☐ manage selection of photos
+    ☐ display extra information about photos (file path, etc.)
+      ☐ as tooltip
+      ☐ as overlay
+    ☐ allow grouping of images (based on linking above)
+      - groups take one tile, can scroll through them
+    ☐ show aggregate information
+      ☐ time range of photos in view
+      ☐ number of photos in current gallery
+
+  Slideshow:
+    ☐ basic slideshow of photos in current gallery view
+    ☐ zoom/pan
+    ☐ animated transitions
+
+  Explorer-widget:
+    Displays the various categories for filtering the photo library.
+    ☐ list of current filters
+    ☐ list of tag kinds
+    ☐ list of tags of a tag kind
+    ☐ group into albums
+      Difference to searching with filters is that albums are a static set of photos
+    ☐ save tag filters (dynamic albums)
+
+  Albums:
+    ☐ data structure for albums
+      - `PRAGMA foreign_keys = ON;`
+      - `CREATE TABLE albums (id INTEGER PRIMARY KEY, name TEXT NOT NULL, description TEXT NOT NULL)`
+      - `CREATE TABLE albums_x_photos (photo_id INTEGER NOT NULL, album_id INTEGER NOT NULL, PRIMARY KEY (photo_id, album_id), order INTEGER NOT NULL, FOREIGN KEY(photo_id) REFERENCES photos(id) ON DELETE CASCADE, FOREIGN KEY(album_id) REFERENCES albums(id) ON DELETE CASCADE)`
+
+  Metadata:
+    ☐ read all EXIF things, cache in DB
+    ☐ free-text comment for photos
+      - `ALTER TABLE photos ADD COLUMN comment TEXT`
 
   Tagging:
+    ☐ data structure for tags
+      - `PRAGMA foreign_keys = ON;`
+      - `CREATE TABLE tag_kinds (id INTEGER PRIMARY KEY, name TEXT NOT NULL)`
+      - `CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT NOT NULL, kind INTEGER NOT NULL, FOREIGN KEY(kind) REFERENCES tag_kinds(id) ON DELETE CASCADE)`
+      - `CREATE TABLE tags_x_photos (photo_id INTEGER NOT NULL, tag_id INTEGER NOT NULL, PRIMARY KEY (photo_id, tag_id), FOREIGN KEY(photo_id) REFERENCES photos(id) ON DELETE CASCADE, FOREIGN KEY(tag_id) REFERENCES tags(id) ON DELETE CASCADE)`
+    ☐ default tag kinds: people, location
     ☐ manage tag kinds
     ☐ allow assigning tags to pictures (auto-completion of existing values for the current tag kind)
     ☐ allow easy (from the usability perspective) and efficient (from the implementation perspective) renaming of tag kinds and values
 
-  Search:
+  Discovering:
+    A single text box input (but maybe more structured) with auto-completion
     ☐ search by tag
-    ☐ search by time
-    ☐ search by location (?)
+    ☐ search by time of day
+    ☐ search by month/season
+    ☐ search by absolute date
+    ☐ search by geo-location (need to read this from EXIF)
+      ☐ get database of geographic entities
+      ☐ use spatial extension of sqlite
