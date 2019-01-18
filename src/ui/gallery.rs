@@ -3,12 +3,14 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use bit_set::BitSet;
 use cairo;
 use gdk;
 use gtk;
 
 use gio::prelude::*;
 use gtk::prelude::*;
+use gdk::ModifierType;
 
 pub struct Gallery<T> {
     drawing_area: gtk::DrawingArea,
@@ -47,6 +49,8 @@ struct GalleryProperties {
     /// which then causes a second resize event. And only in the second event has the
     /// scrollbar been updated by the ScrolledWindow container.
     scrollbar_adjust: Option<f64>,
+    /// Indexes of selected photos
+    selected_photos: BitSet,
 }
 
 impl GalleryProperties {
@@ -60,6 +64,7 @@ impl GalleryProperties {
             num_rows: 0,
             num_tiles: 0,
             scrollbar_adjust: None,
+            selected_photos: BitSet::new(),
         }
     }
 }
@@ -83,6 +88,7 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
         this.viewport.add(&this.drawing_area);
         this.scrolled_window.add(&this.viewport);
         this.scrolled_window.set_property_hscrollbar_policy(gtk::PolicyType::Never);
+        this.scrolled_window.add_events(gdk::EventMask::KEY_PRESS_MASK.bits() as i32);
 
         this.notify_provider();
 
@@ -92,6 +98,10 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
 
         this.drawing_area.connect_draw(clone!(this => move |_, context| {
             this.on_drawing_draw(context)
+        }));
+
+        this.scrolled_window.connect_key_press_event(clone!(this => move |_, evt| {
+            this.on_key_press(evt)
         }));
 
         this
@@ -184,7 +194,40 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
         }
     }
 
+    fn select_all(&self) -> () {
+        let mut props = self.properties.borrow_mut();
+        for i in 0..props.num_tiles {
+            props.selected_photos.insert(i as usize);
+        }
+        debug!("All photos selected");
+    }
+
+    fn deselect_all(&self) -> () {
+        let mut props = self.properties.borrow_mut();
+        props.selected_photos.clear();
+        debug!("All photos deselected");
+    }
+
     // Event handlers
+
+    fn on_key_press(&self, evt: &gdk::EventKey) -> Inhibit {
+        let state = evt.get_state();
+
+        trace!("{:?} {:?}", state, evt.get_keyval());
+        
+        match evt.get_keyval() {
+            gdk::enums::key::A if state.contains(gdk::ModifierType::CONTROL_MASK) => {
+                self.deselect_all();
+                self.drawing_area.queue_draw();
+            },
+            gdk::enums::key::a if state.contains(gdk::ModifierType::CONTROL_MASK) => {
+                self.select_all();
+                self.drawing_area.queue_draw();
+            },
+            _ => {}
+        }
+        Inhibit(false)
+    }
 
     fn on_drawing_configure_event(&self, _evt: &gdk::EventConfigure) -> bool {
         self.recompute_size(true);
@@ -225,6 +268,7 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
 
             for x in x_idx_start..cur_xcount.min(x_idx_end) {
                 let (fx, fy) = (x as f64, y as f64);
+                let (tx, ty) = (fx * tile_width, fy * tile_height);
                 let index = y * xcount + x;
 
                 // draw the image
@@ -232,8 +276,8 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
                 let img_width = surf.get_width() as f64;
                 let img_height = surf.get_height() as f64;
                 if img_height <= tile_height && img_width <= tile_width {
-                    let target_x = fx * tile_width + (tile_width - img_width) / 2.0;
-                    let target_y = fy * tile_height + (tile_height - img_height) / 2.0;
+                    let target_x = tx + (tile_width - img_width) / 2.0;
+                    let target_y = ty + (tile_height - img_height) / 2.0;
                     trace!("Render {} unscaled", index);
                     context.set_source_surface(&*surf, target_x, target_y);
                     context.paint()
@@ -243,21 +287,35 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
                         // fit width
                         let scale = tile_width / img_width;
                         trace!("Fit {} to width, scale={}", index, scale);
-                        let target_y = fy * tile_height + (tile_height - img_height * scale) / 2.0;
+                        let target_y = ty + (tile_height - img_height * scale) / 2.0;
 
                         context.scale(scale, scale);
-                        context.set_source_surface(&*surf, fx * tile_width / scale, target_y / scale);
+                        context.set_source_surface(&*surf, tx / scale, target_y / scale);
                     } else {
                         // fit height
                         let scale = tile_height / img_height;
                         trace!("Fit {} to height, scale={}", index, scale);
-                        let target_x = fx * tile_width + (tile_width - img_width * scale) / 2.0;
+                        let target_x = tx + (tile_width - img_width * scale) / 2.0;
 
                         context.scale(scale, scale);
-                        context.set_source_surface(&*surf, target_x / scale, fy * tile_height / scale);
+                        context.set_source_surface(&*surf, target_x / scale, ty / scale);
                     }
                     context.paint();
                     context.restore();
+                }
+
+                if props.selected_photos.contains(index as usize) {
+                    debug!("Drawing selection marker for {}", index);
+                    context.arc(tx + 30.0, ty + 30.0, 20.0, 0.0, 2.0 * std::f64::consts::PI);
+                    context.set_source_rgba(0.8, 0.8, 0.8, 0.5);
+                    context.fill();
+                    
+                    context.move_to(tx + 20.0, ty + 30.0);
+                    context.line_to(tx + 30.0, ty + 40.0);
+                    context.line_to(tx + 42.0, ty + 15.0);
+                    context.set_line_width(3.0);
+                    context.set_source_rgb(1.0, 1.0, 1.0);
+                    context.stroke(); 
                 }
             }
         }

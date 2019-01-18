@@ -1,3 +1,5 @@
+
+extern crate bit_set;
 extern crate chrono;
 extern crate directories;
 extern crate lru;
