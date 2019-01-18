@@ -11,8 +11,8 @@ use gdk::ContextExt;
 
 pub struct LibImageProvider {
     library: Arc<Library>,
-    visible_photos: Vec<PhotoId>,
-    thumb_cache: std::cell::RefCell<lru::LruCache<u32, cairo::ImageSurface>>,
+    shown_photos: Vec<PhotoId>,
+    image_cache: std::cell::RefCell<lru::LruCache<u32, cairo::ImageSurface>>,
 }
 
 impl LibImageProvider {
@@ -20,11 +20,21 @@ impl LibImageProvider {
         let photos = library.db().all_photos().unwrap();
         LibImageProvider {
             library: library,
-            visible_photos: photos,
-            thumb_cache: std::cell::RefCell::new(lru::LruCache::new(200)),
+            shown_photos: photos,
+            image_cache: std::cell::RefCell::new(lru::LruCache::new(200)),
         }
     }
 
+    pub fn shown_photos(&self) -> &[PhotoId] {
+        self.shown_photos.as_ref()
+    }
+
+    pub fn set_shown_photos<I: IntoIterator<Item=PhotoId>>(&mut self, photos: I) {
+        self.shown_photos.clear();
+        self.shown_photos.extend(photos)
+    }
+
+    /// Surface returned when an error occurs while fetching the actual image.
     fn error_surf() -> cairo::ImageSurface {
         let surf = cairo::ImageSurface::create(cairo::Format::Rgb24, 64, 64).unwrap();
         let context = cairo::Context::new(&surf);
@@ -36,16 +46,16 @@ impl LibImageProvider {
 
 impl ImageProvider for LibImageProvider {
     fn image_count(&self) -> u32 {
-        self.visible_photos.len() as u32
+        self.shown_photos.len() as u32
     }
 
     fn get_image(&self, index: u32) -> cairo::ImageSurface {
-        if index as usize >= self.visible_photos.len() {
+        if index as usize >= self.shown_photos.len() {
             return Self::error_surf()
         }
 
-        let photo = self.visible_photos[index as usize];
-        let mut cache = self.thumb_cache.borrow_mut();
+        let photo = self.shown_photos[index as usize];
+        let mut cache = self.image_cache.borrow_mut();
         if let Some(value) = cache.get(&index) {
             debug!("Retrieved thumbnail {:?} from cache", photo);
             value.clone()

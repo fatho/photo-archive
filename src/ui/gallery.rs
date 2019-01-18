@@ -1,9 +1,7 @@
 //! A widget for displaying a gallery of images base on a gtk::DrawingArea inside a gtk::ScrolledWindow.
 
 use std::cell::RefCell;
-use std::ops::Deref;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 
 use cairo;
 use gdk;
@@ -17,7 +15,7 @@ pub struct Gallery<T> {
     viewport: gtk::Viewport,
     scrolled_window: gtk::ScrolledWindow,
     properties: Rc<RefCell<GalleryProperties>>,
-    provider: Rc<T>,
+    provider: Rc<RefCell<T>>,
 }
 
 impl<T> Clone for Gallery<T> {
@@ -78,7 +76,7 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
             drawing_area: gtk::DrawingArea::new(),
             viewport: gtk::Viewport::new(None, None),
             scrolled_window: gtk::ScrolledWindow::new(None, None),
-            provider: Rc::new(provider),
+            provider: Rc::new(RefCell::new(provider)),
             properties: Rc::new(RefCell::new(GalleryProperties::default())),
         };
 
@@ -104,10 +102,22 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
         // number of tiles per row
         {
             let mut props = self.properties.borrow_mut();
-            props.num_tiles = self.provider.image_count();
+            props.num_tiles = self.provider.borrow().image_count();
         }
 
         self.recompute_size(false);
+    }
+
+    /// Temporarily gain access to the image provider.
+    pub fn borrow_image_provider(&self) -> std::cell::Ref<T> {
+        self.provider.borrow()
+    }
+
+    /// Temporarily gain exclusive access to the image provider. Note that this
+    /// prevents the gallery widget from accessing the image provider in its draw
+    /// event handler.
+    pub fn borrow_image_provider_mut(&self) -> std::cell::RefMut<T> {
+        self.provider.borrow_mut()
     }
 
     fn recompute_tiles(&self) {
@@ -218,7 +228,7 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
                 let index = y * xcount + x;
 
                 // draw the image
-                let surf = self.provider.get_image(index);
+                let surf = self.provider.borrow().get_image(index);
                 let img_width = surf.get_width() as f64;
                 let img_height = surf.get_height() as f64;
                 if img_height <= tile_height && img_width <= tile_width {
