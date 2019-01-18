@@ -1,4 +1,5 @@
 extern crate chrono;
+extern crate directories;
 extern crate lru;
 extern crate rusqlite;
 extern crate walkdir;
@@ -89,8 +90,9 @@ fn build_ui(application: &gtk::Application) {
 
     let main_pane: gtk::Paned = builder.get_object("main_pane").unwrap();
 
-    // TODO: make library path configurable
-    let photo_root = Path::new("/home/fatho/Pictures");
+    let user_dirs = directories::UserDirs::new().expect("Cannot access user directories");
+    let photo_path = user_dirs.picture_dir().expect("Picture directory not found");
+    let photo_root = Path::new(photo_path);
     let photo_lib = library::Library::open(photo_root).unwrap();
     photo_lib.refresh().unwrap();
     let arc_photo_lib = std::sync::Arc::new(photo_lib);

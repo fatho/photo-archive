@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 chrono = "0.4.6"
+directories = "1.0.2"
 lru = "0.1.11"
 walkdir = "2.2.7"
 rusqlite = "0.16.0"
