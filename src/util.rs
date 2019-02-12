@@ -20,19 +20,19 @@ macro_rules! clone {
 }
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Point {
     pub x: f64,
     pub y: f64,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Size {
     pub w: f64,
     pub h: f64
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Rect {
     pub top_left: Point,
     pub size: Size,
@@ -57,7 +57,7 @@ impl Size {
 
     /// Scale the current size so that self.w = target.w or self.h = target.h, while keeping the aspect ratio of self.
     #[inline(always)]
-    pub fn scale_to_fit(&self, target: Size) -> Size {
+    pub fn scale_to_fit(&self, target: &Size) -> Size {
         if target.w / target.h > self.w / self.h {
             // target is wider, keep height, scale width
             Size {
@@ -82,7 +82,7 @@ impl Rect {
                 x: self.top_left.x + (self.size.w - size.w) / 2.0,
                 y: self.top_left.y + (self.size.h - size.h) / 2.0,
             },
-            size: *size,
+            size: size.clone(),
         }
     }
 }

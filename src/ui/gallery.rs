@@ -8,9 +8,7 @@ use cairo;
 use gdk;
 use gtk;
 
-use gio::prelude::*;
 use gtk::prelude::*;
-use gdk::ModifierType;
 
 use crate::util::{Point, Size, Rect};
 
@@ -272,25 +270,23 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
             };
 
             for x in x_idx_start..cur_xcount.min(x_idx_end) {
-                // compute location tile
-                let tile_pos = Point {
-                    x: x as f64 * tile_size.w,
-                    y: y as f64 * tile_size.h,
-                };
+                // compute location of tile
                 let tile_rect = Rect {
-                    top_left: tile_pos,
-                    size: tile_size,
+                    top_left: Point {
+                        x: x as f64 * tile_size.w,
+                        y: y as f64 * tile_size.h,
+                    },
+                    size: tile_size.clone(),
                 };
-                let image_index = y * xcount + x;
 
                 // render image
+                let image_index = y * xcount + x;
                 let surf = self.provider.borrow().get_image(image_index);
-                super::draw::draw_image_shrink_fit(context, surf, tile_rect);
+                super::draw::draw_image_shrink_fit(context, surf, &tile_rect);
 
                 // render UI elements
                 if props.selected_photos.contains(image_index as usize) {
-                    debug!("Drawing selection marker for {}", image_index);
-                    super::draw::draw_selection_marker(context, tile_pos.offset(30.0, 30.0));
+                    super::draw::draw_selection_marker(context, tile_rect.top_left.offset(30.0, 30.0));
                 }
             }
         }

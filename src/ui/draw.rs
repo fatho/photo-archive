@@ -20,7 +20,7 @@ pub fn draw_selection_marker(context: &cairo::Context, center: Point) {
 
 /// Draw an image either centered at original size if it fits within the target rectangle,
 /// or shrunk to fit the target rectangle while keeping the aspect ratio.
-pub fn draw_image_shrink_fit(context: &cairo::Context, surface: cairo::ImageSurface, target: Rect) {
+pub fn draw_image_shrink_fit(context: &cairo::Context, surface: cairo::ImageSurface, target: &Rect) {
     let img_size = Size {
         w: surface.get_width() as f64,
         h: surface.get_height() as f64
@@ -31,7 +31,7 @@ pub fn draw_image_shrink_fit(context: &cairo::Context, surface: cairo::ImageSurf
         context.paint()
     } else {
         context.save();
-        let render_size = img_size.scale_to_fit(target.size);
+        let render_size = img_size.scale_to_fit(&target.size);
         let render_pos = target.centered(&render_size).top_left;
         let scale = render_size.w / img_size.w; // w or h doesn't matter, aspect ratio is kept
 
