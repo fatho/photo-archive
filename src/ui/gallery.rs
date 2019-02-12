@@ -12,6 +12,8 @@ use gio::prelude::*;
 use gtk::prelude::*;
 use gdk::ModifierType;
 
+use crate::util::{Point, Size, Rect};
+
 pub struct Gallery<T> {
     drawing_area: gtk::DrawingArea,
     viewport: gtk::Viewport,
@@ -214,7 +216,7 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
         let state = evt.get_state();
 
         trace!("{:?} {:?}", state, evt.get_keyval());
-        
+
         match evt.get_keyval() {
             gdk::enums::key::A if state.contains(gdk::ModifierType::CONTROL_MASK) => {
                 self.deselect_all();
@@ -242,22 +244,25 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
         context.set_source_rgb(1.0, 1.0, 1.0);
         context.paint();
 
-        // size of the drawn images
+        // size of the image tiles
         let props = self.properties.borrow();
-        let tile_width = props.actual_tile_width as f64;
-        let tile_height = props.actual_tile_height as f64;
+        let tile_size = Size {
+            w: props.actual_tile_width as f64,
+            h: props.actual_tile_height as f64,
+        };
 
         // layout of tiles to render
         let xcount = props.tiles_per_row;
         let ycount = props.num_rows;
+        // the last row may contain less than ycount tiles
         let last_y_xcount = props.num_tiles % xcount;
 
         // determine which tiles have to be redrawn
-        let x_idx_start = (clip_start_x / tile_width).floor() as u32;
-        let x_idx_end = ((clip_end_x / tile_width).ceil() as u32).min(xcount);
+        let x_idx_start = (clip_start_x / tile_size.w).floor() as u32;
+        let x_idx_end = ((clip_end_x / tile_size.w).ceil() as u32).min(xcount);
 
-        let y_idx_start = (clip_start_y / tile_height).floor() as u32;
-        let y_idx_end = ((clip_end_y / tile_height).ceil() as u32).min(ycount);
+        let y_idx_start = (clip_start_y / tile_size.h).floor() as u32;
+        let y_idx_end = ((clip_end_y / tile_size.h).ceil() as u32).min(ycount);
 
         for y in y_idx_start..y_idx_end {
             let cur_xcount = if y < ycount - 1 {
@@ -267,55 +272,25 @@ impl<T> Gallery<T> where T: ImageProvider + 'static {
             };
 
             for x in x_idx_start..cur_xcount.min(x_idx_end) {
-                let (fx, fy) = (x as f64, y as f64);
-                let (tx, ty) = (fx * tile_width, fy * tile_height);
-                let index = y * xcount + x;
+                // compute location tile
+                let tile_pos = Point {
+                    x: x as f64 * tile_size.w,
+                    y: y as f64 * tile_size.h,
+                };
+                let tile_rect = Rect {
+                    top_left: tile_pos,
+                    size: tile_size,
+                };
+                let image_index = y * xcount + x;
 
-                // draw the image
-                let surf = self.provider.borrow().get_image(index);
-                let img_width = surf.get_width() as f64;
-                let img_height = surf.get_height() as f64;
-                if img_height <= tile_height && img_width <= tile_width {
-                    let target_x = tx + (tile_width - img_width) / 2.0;
-                    let target_y = ty + (tile_height - img_height) / 2.0;
-                    trace!("Render {} unscaled", index);
-                    context.set_source_surface(&*surf, target_x, target_y);
-                    context.paint()
-                } else {
-                    context.save();
-                    if img_width / img_height >= tile_width / tile_height {
-                        // fit width
-                        let scale = tile_width / img_width;
-                        trace!("Fit {} to width, scale={}", index, scale);
-                        let target_y = ty + (tile_height - img_height * scale) / 2.0;
+                // render image
+                let surf = self.provider.borrow().get_image(image_index);
+                super::draw::draw_image_shrink_fit(context, surf, tile_rect);
 
-                        context.scale(scale, scale);
-                        context.set_source_surface(&*surf, tx / scale, target_y / scale);
-                    } else {
-                        // fit height
-                        let scale = tile_height / img_height;
-                        trace!("Fit {} to height, scale={}", index, scale);
-                        let target_x = tx + (tile_width - img_width * scale) / 2.0;
-
-                        context.scale(scale, scale);
-                        context.set_source_surface(&*surf, target_x / scale, ty / scale);
-                    }
-                    context.paint();
-                    context.restore();
-                }
-
-                if props.selected_photos.contains(index as usize) {
-                    debug!("Drawing selection marker for {}", index);
-                    context.arc(tx + 30.0, ty + 30.0, 20.0, 0.0, 2.0 * std::f64::consts::PI);
-                    context.set_source_rgba(0.8, 0.8, 0.8, 0.5);
-                    context.fill();
-                    
-                    context.move_to(tx + 20.0, ty + 30.0);
-                    context.line_to(tx + 30.0, ty + 40.0);
-                    context.line_to(tx + 42.0, ty + 15.0);
-                    context.set_line_width(3.0);
-                    context.set_source_rgb(1.0, 1.0, 1.0);
-                    context.stroke(); 
+                // render UI elements
+                if props.selected_photos.contains(image_index as usize) {
+                    debug!("Drawing selection marker for {}", image_index);
+                    super::draw::draw_selection_marker(context, tile_pos.offset(30.0, 30.0));
                 }
             }
         }
