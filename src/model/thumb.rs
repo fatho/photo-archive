@@ -18,7 +18,7 @@ pub struct Thumbnail(std::vec::Vec<u8>);
 
 impl Thumbnail {
     /// Generate a thumbnail image where the longest side has at most the given size.
-    pub fn generate<P: AsRef<Path>>(original_file: P, size: u32) -> super::Result<Thumbnail> {
+    pub fn generate<P: AsRef<Path>>(original_file: P, size: u32) -> crate::errors::Result<Thumbnail> {
         let img = image::open(original_file)?;
 
         let width = img.width();

@@ -29,8 +29,10 @@ mod adapters;
 mod library;
 #[macro_use]
 mod util;
-mod ui;
+mod view;
+mod model;
 mod database;
+mod errors;
 
 fn build_ui(application: &gtk::Application) {
     let glade_src = include_str!("../resources/ui.glade");
@@ -53,7 +55,7 @@ fn build_ui(application: &gtk::Application) {
     photo_lib.refresh().unwrap();
     let arc_photo_lib = std::sync::Arc::new(photo_lib);
 
-    let gallery = ui::gallery::Gallery::new(adapters::image_provider::LibImageProvider::new(arc_photo_lib));
+    let gallery = view::gallery::Gallery::new(adapters::image_provider::LibImageProvider::new(arc_photo_lib));
 
     main_pane.add2(gallery.as_ref());
 

@@ -1,9 +1,9 @@
 //! ImageProvider for the image database.
 
-use crate::ui::gallery::ImageProvider;
+use crate::view::gallery::ImageProvider;
 use crate::library::Library;
-use crate::library::meta::{PhotoId};
-use crate::library::thumb::{Thumbnail};
+use crate::model::meta::{PhotoId};
+use crate::model::thumb::{Thumbnail};
 
 use std::vec::Vec;
 use std::sync::{Arc};

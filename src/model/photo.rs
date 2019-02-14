@@ -20,7 +20,7 @@ pub enum PhotoTimestamp {
 }
 
 impl Info {
-    pub fn load(filename: &Path) -> super::Result<Self> {
+    pub fn load(filename: &Path) -> crate::errors::Result<Self> {
         let file = std::fs::File::open(filename)?;
         let reader = match exif::Reader::new(&mut std::io::BufReader::new(&file)) {
             Err(exif_err) => {

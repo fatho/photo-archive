@@ -1,57 +1,8 @@
 use std::path::{Path, PathBuf};
 
-pub mod meta;
-pub mod photo;
-pub mod thumb;
-
-#[derive(Debug)]
-pub enum Error {
-    /// Root folder doesn't exist or is not a directory
-    InvalidRoot,
-    Io(std::io::Error),
-    PhotoExif(exif::Error),
-    Db(meta::Error),
-    Image(image::ImageError),
-    // LibraryScanError(walkdir::Error),
-}
-
-impl From<exif::Error> for Error {
-    fn from(err: exif::Error) -> Error {
-        Error::PhotoExif(err)
-    }
-}
-
-impl From<std::io::Error> for Error {
-    fn from(ioerr: std::io::Error) -> Error {
-        Error::Io(ioerr)
-    }
-}
-
-impl From<meta::Error> for Error {
-    fn from(err: meta::Error) -> Error {
-        Error::Db(err)
-    }
-}
-
-impl From<image::ImageError> for Error {
-    fn from(err: image::ImageError) -> Error {
-        Error::Image(err)
-    }
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            &Error::InvalidRoot => write!(f, "Invalid root dir"),
-            &Error::Io(ref ioerr) => write!(f, "I/O error: {}", ioerr),
-            &Error::PhotoExif(ref exif_error) => write!(f, "EXIF error: {}", exif_error),
-            &Error::Db(ref err) => write!(f, "Database error: {}", err),
-            &Error::Image(ref err) => write!(f, "Image error: {}", err),
-        }
-    }
-}
-
-type Result<T> = std::result::Result<T, Error>;
+use crate::model::meta;
+use crate::model::thumb;
+use crate::model::photo;
 
 #[derive(Debug)]
 pub struct Library {
@@ -61,7 +12,7 @@ pub struct Library {
 }
 
 impl Library {
-    pub fn open<P: Sized + AsRef<Path>>(root_dir: P) -> Result<Self> {
+    pub fn open<P: Sized + AsRef<Path>>(root_dir: P) -> crate::errors::Result<Self> {
         info!("Opening library '{}'", root_dir.as_ref().to_string_lossy());
 
         if root_dir.as_ref().is_dir() {
@@ -81,11 +32,11 @@ impl Library {
             };
             Ok(archive)
         } else {
-            Err(Error::InvalidRoot)
+            Err(crate::errors::Error::InvalidRoot)
         }
     }
 
-    pub fn refresh(&self) -> Result<()> {
+    pub fn refresh(&self) -> crate::errors::Result<()> {
         info!("Rescanning library");
 
         let root_path = self.root_dir.as_ref();
@@ -128,7 +79,7 @@ impl Library {
         })
     }
 
-    fn generate_thumbnail_impl(&self, photo_path: &Path, photo_id: meta::PhotoId) -> Result<()> {
+    fn generate_thumbnail_impl(&self, photo_path: &Path, photo_id: meta::PhotoId) -> crate::errors::Result<()> {
         match thumb::Thumbnail::generate(photo_path, 400) {
             Ok(thumb) => self.thumb_db.insert_thumbnail(photo_id, Ok(&thumb)),
             Err(err) => {
@@ -138,7 +89,7 @@ impl Library {
         }.map_err(Into::into)
     }
 
-    pub fn generate_thumbnail(&self, photo_id: meta::PhotoId)-> Result<()> {
+    pub fn generate_thumbnail(&self, photo_id: meta::PhotoId)-> crate::errors::Result<()> {
         if let Some(photo) = self.meta_db.get_photo(photo_id)? {
             let photo_path = self.get_full_path(&photo);
             self.generate_thumbnail_impl(photo_path.as_ref(), photo_id)
@@ -169,7 +120,7 @@ impl Library {
     }
 }
 
-fn scan_library<F>(path: &Path, mut callback: F) -> Result<()> where F: FnMut(&Path) -> Result<()> {
+fn scan_library<F>(path: &Path, mut callback: F) -> crate::errors::Result<()> where F: FnMut(&Path) -> crate::errors::Result<()> {
     let photo_predicate = |entry: &walkdir::DirEntry| {
         let entry_type = entry.file_type();
         let name = entry.file_name().to_str();
