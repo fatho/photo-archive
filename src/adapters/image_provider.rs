@@ -44,7 +44,7 @@ impl LibImageProvider {
         return surf;
     }
 
-    fn thumb_to_surface_cached(&self, photo: PhotoId, thumb: &Thumbnail) -> Option<cairo::ImageSurface> {
+    fn thumb_to_surface(thumb: &Thumbnail) -> Option<cairo::ImageSurface> {
         if let Ok(img) = image::load_from_memory(thumb.as_jpg()) {
             let width = img.width();
             let height = img.height();
@@ -56,7 +56,6 @@ impl LibImageProvider {
             context.set_source_pixbuf(&pb, 0.0, 0.0);
             context.paint();
             drop(context);
-            self.image_cache.borrow_mut().put(photo, surf.clone());
             Some(surf)
         } else {
             None
@@ -75,7 +74,7 @@ impl ImageProvider for LibImageProvider {
         }
 
         let photo = self.shown_photos[index as usize];
-        let mut cache = self.image_cache.borrow_mut();
+        let mut cache =  self.image_cache.borrow_mut();
         if let Some(value) = cache.get(&photo) {
             debug!("Retrieved thumbnail {:?} from cache", photo);
             value.clone()
@@ -84,7 +83,8 @@ impl ImageProvider for LibImageProvider {
 
             if let Ok(maybe_thumb) = self.library.thumb_db().get_thumbnail(photo) {
                 if let Some(thumb) = maybe_thumb {
-                    if let Some(surf) = self.thumb_to_surface_cached(photo, &thumb) {
+                    if let Some(surf) = Self::thumb_to_surface(&thumb) {
+                        cache.put(photo, surf.clone());
                         return surf;
                     }
                 } else {
