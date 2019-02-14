@@ -33,6 +33,7 @@ mod view;
 mod model;
 mod database;
 mod errors;
+mod background;
 
 fn build_ui(application: &gtk::Application) {
     let glade_src = include_str!("../resources/ui.glade");
@@ -52,7 +53,7 @@ fn build_ui(application: &gtk::Application) {
     let photo_path = user_dirs.picture_dir().expect("Picture directory not found");
     let photo_root = Path::new(photo_path);
     let photo_lib = library::Library::open(photo_root).unwrap();
-    photo_lib.refresh().unwrap();
+    // photo_lib.refresh().unwrap();
     let arc_photo_lib = std::sync::Arc::new(photo_lib);
 
     let gallery = view::gallery::Gallery::new(adapters::image_provider::LibImageProvider::new(arc_photo_lib));
@@ -60,6 +61,8 @@ fn build_ui(application: &gtk::Application) {
     main_pane.add2(gallery.as_ref());
 
     window.show_all();
+
+    let window_in_callback = window.clone();
 }
 
 fn main() {
