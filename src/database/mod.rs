@@ -1,8 +1,9 @@
 //! Convenience wrapper around Rusqlite with some additional features such as migrations.
 
+use failure::Fail;
+use log::{debug, info};
+use rusqlite::{Connection, OptionalExtension, Transaction, NO_PARAMS};
 use std::path::Path;
-use rusqlite::{Connection, Transaction, OptionalExtension, NO_PARAMS};
-use rusqlite::types::ToSql;
 
 #[derive(Debug)]
 pub struct Database<S> {
@@ -10,35 +11,28 @@ pub struct Database<S> {
     schema: S,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Fail)]
 pub enum Error {
-    Db(rusqlite::Error),
-    UnknownSchemaVersion(Version),
+    #[fail(display = "Unknown schema {}", version)]
+    UnknownSchemaVersion { version: Version },
 }
 
-impl From<rusqlite::Error> for Error {
-    fn from(err: rusqlite::Error) -> Error {
-        Error::Db(err)
-    }
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self {
-            Error::Db(ref err) => err.fmt(f),
-            Error::UnknownSchemaVersion(version) => write!(f, "Schema version {} is not known", version.0),
-        }
-    }
-}
-
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = std::result::Result<T, failure::Error>;
 
 #[derive(Debug, Copy, Clone, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Version(pub u32);
 
+impl std::fmt::Display for Version {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+        self.0.fmt(formatter)
+    }
+}
+
 /// A versioned database schema with facilities for migrating from one schema version to the next.
 pub trait Schema: Ord {
-    fn from_version(version: Version) -> Option<Self> where Self: Sized;
+    fn from_version(version: Version) -> Option<Self>
+    where
+        Self: Sized;
     fn version(&self) -> Version;
     fn latest() -> Self;
 
@@ -46,11 +40,16 @@ pub trait Schema: Ord {
     fn run_upgrade(&self, tx: &Transaction) -> Result<()>;
 }
 
-impl<S> Database<S> where S: Schema {
+impl<S> Database<S>
+where
+    S: Schema,
+{
     pub fn open_or_create<P: AsRef<Path>>(path: P) -> Result<Self> {
         let mut conn = Connection::open(path)?;
         let current_version = Self::init_for_migrations(&mut conn)?;
-        let schema = S::from_version(current_version).ok_or(Error::UnknownSchemaVersion(current_version))?;
+        let schema = S::from_version(current_version).ok_or(Error::UnknownSchemaVersion {
+            version: current_version,
+        })?;
 
         Ok(Self {
             conn: conn,
@@ -89,13 +88,18 @@ impl<S> Database<S> where S: Schema {
     fn init_for_migrations(conn: &mut Connection) -> rusqlite::Result<Version> {
         debug!("Initializing database migrations");
 
-        conn.execute("CREATE TABLE IF NOT EXISTS version(version INTEGER)", NO_PARAMS)?;
-        let cur_version_opt = conn.query_row("SELECT * FROM version", NO_PARAMS, |row| row.get(0)).optional()?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS version(version INTEGER)",
+            NO_PARAMS,
+        )?;
+        let cur_version_opt = conn
+            .query_row("SELECT * FROM version", NO_PARAMS, |row| row.get(0))
+            .optional()?;
         let cur_version = match cur_version_opt {
             Some(version) => {
                 info!("Found database version {}", version);
                 Version(version)
-            },
+            }
             None => {
                 info!("Found blank database");
                 let version = Version(0);
@@ -109,7 +113,8 @@ impl<S> Database<S> where S: Schema {
     fn run_migration(&mut self, target: Version) -> Result<()> {
         info!("Migrating to version {}", target.0);
 
-        let new_schema = S::from_version(target).ok_or(Error::UnknownSchemaVersion(target))?;
+        let new_schema =
+            S::from_version(target).ok_or(Error::UnknownSchemaVersion { version: target })?;
         assert_eq!(new_schema.version().0, self.schema.version().0 + 1);
 
         let tx = self.conn.transaction()?;

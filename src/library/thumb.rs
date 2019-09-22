@@ -1,12 +1,12 @@
 //! Thumbnail generation
 
-use std::path::{Path};
+use std::path::Path;
 
-use rusqlite::{Transaction, OptionalExtension, NO_PARAMS};
+use image::GenericImageView;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rusqlite::types::ToSql;
-use image::GenericImageView;
+use rusqlite::{OptionalExtension, Transaction, NO_PARAMS};
 
 use crate::database;
 use crate::database::{Database, Schema};
@@ -18,7 +18,10 @@ pub struct Thumbnail(std::vec::Vec<u8>);
 
 impl Thumbnail {
     /// Generate a thumbnail image where the longest side has at most the given size.
-    pub fn generate<P: AsRef<Path>>(original_file: P, size: u32) -> crate::errors::Result<Thumbnail> {
+    pub fn generate<P: AsRef<Path>>(
+        original_file: P,
+        size: u32,
+    ) -> crate::errors::Result<Thumbnail> {
         let img = image::open(original_file)?;
 
         let width = img.width();
@@ -63,19 +66,21 @@ impl ThumbDatabase {
     pub fn open_or_create<P: AsRef<Path>>(path: P) -> database::Result<ThumbDatabase> {
         let mut db = database::Database::open_or_create(path)?;
         db.upgrade()?;
-        Ok(Self {
-            db: db,
-        })
+        Ok(Self { db: db })
     }
 
     pub fn get_thumbnail_state(&self, photo_id: PhotoId) -> database::Result<ThumbnailState> {
-        let code = self.db.connection().query_row(
-            "SELECT (CASE WHEN thumbnail IS NOT NULL THEN 1 ELSE 0 END) +
+        let code = self
+            .db
+            .connection()
+            .query_row(
+                "SELECT (CASE WHEN thumbnail IS NOT NULL THEN 1 ELSE 0 END) +
                    (CASE WHEN error IS NOT NULL THEN 2 ELSE 0 END)
              FROM thumbnails WHERE id = ?1",
-             &[photo_id.0],
-             |row| row.get::<_, u32>(0)
-        ).optional()?;
+                &[photo_id.0],
+                |row| row.get::<_, u32>(0),
+            )
+            .optional()?;
         Ok(match code {
             None => ThumbnailState::Absent,
             Some(1) => ThumbnailState::Present,
@@ -83,24 +88,31 @@ impl ThumbDatabase {
         })
     }
 
-    pub fn insert_thumbnail(&self, photo_id: PhotoId, thumbnail: Result<&Thumbnail, &str>) -> database::Result<()> {
+    pub fn insert_thumbnail(
+        &self,
+        photo_id: PhotoId,
+        thumbnail: Result<&Thumbnail, &str>,
+    ) -> database::Result<()> {
         self.db.connection().execute(
             "INSERT INTO thumbnails(id, thumbnail, error) VALUES (?1, ?2, ?3) ON CONFLICT (id) DO UPDATE SET thumbnail=?2, error=?3",
             &[
-                &photo_id.0 as &ToSql,
-                &thumbnail.ok().map(|t| t.as_jpg()) as &ToSql,
-                &thumbnail.err() as &ToSql,
+                &photo_id.0 as &dyn ToSql,
+                &thumbnail.ok().map(|t| t.as_jpg()) as &dyn ToSql,
+                &thumbnail.err() as &dyn ToSql,
             ])?;
         Ok(())
     }
 
-
     pub fn get_thumbnail(&self, photo: PhotoId) -> database::Result<Option<Thumbnail>> {
-        self.db.connection().query_row(
-            "SELECT thumbnail FROM thumbnails WHERE id = ?1 AND thumbnail IS NOT NULL",
-            &[photo.0],
-            |row| Thumbnail::from_jpg(row.get(0))
-        ).optional().map_err(Into::into)
+        self.db
+            .connection()
+            .query_row(
+                "SELECT thumbnail FROM thumbnails WHERE id = ?1 AND thumbnail IS NOT NULL",
+                &[photo.0],
+                |row| row.get(0).map(Thumbnail::from_jpg),
+            )
+            .optional()
+            .map_err(Into::into)
     }
 }
 
@@ -129,13 +141,16 @@ impl Schema for ThumbDbSchema {
         match self {
             ThumbDbSchema::Empty => Ok(()),
             ThumbDbSchema::ThumbTable => {
-                tx.execute("CREATE TABLE thumbnails(
+                tx.execute(
+                    "CREATE TABLE thumbnails(
                     id               INTEGER PRIMARY KEY,
                     thumbnail        BLOB,
                     error            TEXT
-                    )", NO_PARAMS)?;
+                    )",
+                    NO_PARAMS,
+                )?;
                 Ok(())
-            },
+            }
         }
     }
 }

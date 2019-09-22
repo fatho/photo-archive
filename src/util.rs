@@ -1,24 +1,6 @@
-
-
-
-/// Taken from https://gtk-rs.org/tuto/closures for easily using widget reference in event handler closures.
-macro_rules! clone {
-    (@param _) => ( _ );
-    (@param $x:ident) => ( $x );
-    ($($n:ident),+ => move || $body:expr) => (
-        {
-            $( let $n = $n.clone(); )+
-            move || $body
-        }
-    );
-    ($($n:ident),+ => move |$($p:tt),+| $body:expr) => (
-        {
-            $( let $n = $n.clone(); )+
-            move |$(clone!(@param $p),)+| $body
-        }
-    );
-}
-
+use std::path::Path;
+use std::io;
+use log::debug;
 
 #[derive(Debug, Clone)]
 pub struct Point {
@@ -29,7 +11,7 @@ pub struct Point {
 #[derive(Debug, Clone)]
 pub struct Size {
     pub w: f64,
-    pub h: f64
+    pub h: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -85,4 +67,28 @@ impl Rect {
             size: size.clone(),
         }
     }
+}
+
+
+/// Create a backup of a file, appending `<NUM>.bak` to the while
+/// with `<NUM>` being the smallest number such that the resulting file name doesn't exist.
+pub fn backup_file(file_path: &Path, rename: bool) -> Result<(), io::Error> {
+    for bak_num in 0..10 {
+        let mut name = file_path.file_name().unwrap().to_os_string();
+        name.push(format!(".{}.bak", bak_num));
+        let bak_file = file_path.with_file_name(&name);
+
+        if bak_file.exists() {
+            debug!("Backup {} already exists", bak_file.to_string_lossy());
+        } else {
+            debug!("Backup name available {}", bak_file.to_string_lossy());
+            let result = if rename {
+                std::fs::rename(file_path, &bak_file)
+            } else {
+                std::fs::copy(file_path, &bak_file).map(|_| ())
+            };
+            return result;
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::Other, "Too many backups"))
 }

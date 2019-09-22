@@ -1,8 +1,86 @@
+use log::{debug, error, info, warn};
+use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::model::meta;
-use crate::model::thumb;
-use crate::model::photo;
+pub mod meta;
+pub mod photo;
+pub mod thumb;
+
+#[derive(Debug)]
+pub struct LibraryFiles {
+    pub root_dir: PathBuf,
+    pub meta_db_file: PathBuf,
+    pub thumb_db_file: PathBuf,
+}
+
+impl LibraryFiles {
+    pub fn new(root_path: &Path) -> LibraryFiles {
+        let root_dir = root_path.to_owned();
+        let mut meta_db_file = root_dir.clone();
+        meta_db_file.push("photos.db");
+        let mut thumb_db_file = root_dir.clone();
+        thumb_db_file.push("thumbs.db");
+
+        LibraryFiles {
+            root_dir,
+            meta_db_file,
+            thumb_db_file,
+        }
+    }
+
+    pub fn root_exists(&self) -> bool {
+        self.root_dir.is_dir()
+    }
+
+    pub fn meta_db_exists(&self) -> bool {
+        self.meta_db_file.is_file()
+    }
+
+    pub fn thumb_db_exists(&self) -> bool {
+        self.thumb_db_file.is_file()
+    }
+
+    /// Return whether all library files exists.
+    pub fn present(&self) -> bool {
+        self.root_exists() && self.meta_db_exists() && self.thumb_db_exists()
+    }
+
+    pub fn remove_with_backup(&self) -> Result<(), io::Error> {
+        if self.meta_db_exists() {
+            Self::make_backup(&self.meta_db_file, true)?;
+        }
+        if self.thumb_db_exists() {
+            Self::make_backup(&self.thumb_db_file, true)?;
+        }
+        Ok(())
+    }
+
+    fn make_backup(file_path: &Path, rename: bool) -> Result<(), io::Error> {
+        for bak_num in 0..10 {
+            let bak_file = file_path.with_extension(format!("{}.bak", bak_num));
+
+            if !bak_file.exists() {
+                let result = if rename {
+                    std::fs::rename(file_path, &bak_file)
+                } else {
+                    std::fs::copy(file_path, &bak_file).map(|_| ())
+                };
+                match result {
+                    Ok(()) => return Ok(()),
+                    Err(err) => {
+                        error!(
+                            "Could not backup {} to {} due to {}",
+                            file_path.to_string_lossy(),
+                            bak_file.to_string_lossy(),
+                            err
+                        );
+                    }
+                }
+            }
+        }
+        Err(io::Error::new(io::ErrorKind::Other, "Too many backups"))
+    }
+}
 
 #[derive(Debug)]
 pub struct Library {
@@ -12,49 +90,47 @@ pub struct Library {
 }
 
 impl Library {
-    pub fn open<P: Sized + AsRef<Path>>(root_dir: P) -> crate::errors::Result<Self> {
-        info!("Opening library '{}'", root_dir.as_ref().to_string_lossy());
+    pub fn open_or_create(files: &LibraryFiles) -> Result<Library, failure::Error> {
+        info!("Opening library '{}'", files.root_dir.to_string_lossy());
 
-        if root_dir.as_ref().is_dir() {
+        if files.root_exists() {
             // open sqlite photo database
-            let mut meta_db_file = root_dir.as_ref().to_owned();
-            meta_db_file.push("photos.db");
-            let mut thumb_db_file = root_dir.as_ref().to_owned();
-            thumb_db_file.push("thumbs.db");
-
-            let meta_db = meta::MetaDatabase::open_or_create(meta_db_file)?;
-            let thumb_db = thumb::ThumbDatabase::open_or_create(thumb_db_file)?;
+            let meta_db = meta::MetaDatabase::open_or_create(&files.meta_db_file)?;
+            let thumb_db = thumb::ThumbDatabase::open_or_create(&files.thumb_db_file)?;
 
             let archive = Self {
-                root_dir: root_dir.as_ref().to_path_buf(),
+                root_dir: files.root_dir.clone(),
                 meta_db: meta_db,
                 thumb_db: thumb_db,
             };
             Ok(archive)
         } else {
-            Err(crate::errors::Error::InvalidRoot)
+            Err(io::Error::from(io::ErrorKind::NotFound).into())
         }
     }
 
-    pub fn refresh(&self) -> crate::errors::Result<()> {
+    pub fn refresh(&self) -> Result<(), failure::Error> {
         info!("Rescanning library");
 
         let root_path = self.root_dir.as_ref();
         scan_library(root_path, |photo_path| {
             let relative = photo_path.strip_prefix(root_path).unwrap();
             match relative.to_str() {
-                None => error!("Could not read photo with non-UTF-8 path {}", relative.to_string_lossy()),
+                None => error!(
+                    "Could not read photo with non-UTF-8 path {}",
+                    relative.to_string_lossy()
+                ),
                 Some(path_str) => {
-                    let photo_id = if let Some(existing_id) = self.meta_db.find_photo_by_path(path_str)? {
+                    let photo_id = if let Some(existing_id) =
+                        self.meta_db.find_photo_by_path(path_str)?
+                    {
                         Some(existing_id)
                     } else {
                         info!("New photo: {}", relative.to_string_lossy().as_ref());
 
                         // load info, do not fail whole operation on error, just log
                         match photo::Info::load(photo_path) {
-                            Ok(info) => {
-                                Some(self.meta_db.insert_photo(path_str, info.created())?)
-                            },
+                            Ok(info) => Some(self.meta_db.insert_photo(path_str, info.created())?),
                             Err(err) => {
                                 error!("Could not read photo: {}", err);
                                 None
@@ -65,7 +141,9 @@ impl Library {
                         // generate thumbnail
                         // TODO: parallelize generating thumbnails so UI shows immediately
                         match self.thumb_db.get_thumbnail_state(photo_id)? {
-                            thumb::ThumbnailState::Error => info!("Generating thumbnail failed ealier, skipping!"),
+                            thumb::ThumbnailState::Error => {
+                                info!("Generating thumbnail failed ealier, skipping!")
+                            }
                             thumb::ThumbnailState::Present => debug!("Thumbnail already exists"),
                             thumb::ThumbnailState::Absent => {
                                 info!("Generating thumbnail!");
@@ -79,17 +157,23 @@ impl Library {
         })
     }
 
-    fn generate_thumbnail_impl(&self, photo_path: &Path, photo_id: meta::PhotoId) -> crate::errors::Result<()> {
+    fn generate_thumbnail_impl(
+        &self,
+        photo_path: &Path,
+        photo_id: meta::PhotoId,
+    ) -> Result<(), failure::Error> {
         match thumb::Thumbnail::generate(photo_path, 400) {
             Ok(thumb) => self.thumb_db.insert_thumbnail(photo_id, Ok(&thumb)),
             Err(err) => {
                 let err_msg = format!("{}", err);
-                self.thumb_db.insert_thumbnail(photo_id, Err(err_msg.as_ref()))
+                self.thumb_db
+                    .insert_thumbnail(photo_id, Err(err_msg.as_ref()))
             }
-        }.map_err(Into::into)
+        }
+        .map_err(Into::into)
     }
 
-    pub fn generate_thumbnail(&self, photo_id: meta::PhotoId)-> crate::errors::Result<()> {
+    pub fn generate_thumbnail(&self, photo_id: meta::PhotoId) -> Result<(), failure::Error> {
         if let Some(photo) = self.meta_db.get_photo(photo_id)? {
             let photo_path = self.get_full_path(&photo);
             self.generate_thumbnail_impl(photo_path.as_ref(), photo_id)
@@ -120,14 +204,18 @@ impl Library {
     }
 }
 
-fn scan_library<F>(path: &Path, mut callback: F) -> crate::errors::Result<()> where F: FnMut(&Path) -> crate::errors::Result<()> {
+fn scan_library<F>(path: &Path, mut callback: F) -> Result<(), failure::Error>
+where
+    F: FnMut(&Path) -> Result<(), failure::Error>,
+{
     let photo_predicate = |entry: &walkdir::DirEntry| {
         let entry_type = entry.file_type();
         let name = entry.file_name().to_str();
         let is_hidden = name.map_or(false, |s| s.starts_with("."));
-        let is_photo = name.and_then(|s| s.split('.').next_back())
-                .map_or(false, |s| s == "jpg" || s == "JPG");
-        ! is_hidden && (entry_type.is_dir() || is_photo)
+        let is_photo = name
+            .and_then(|s| s.split('.').next_back())
+            .map_or(false, |s| s == "jpg" || s == "JPG");
+        !is_hidden && (entry_type.is_dir() || is_photo)
     };
 
     let dirwalker = walkdir::WalkDir::new(path)
@@ -138,8 +226,10 @@ fn scan_library<F>(path: &Path, mut callback: F) -> crate::errors::Result<()> wh
     for entry in dirwalker {
         match entry {
             Err(walkerr) => warn!("Error scanning library: {}", walkerr),
-            Ok(file) => if ! file.file_type().is_dir() {
-                callback(file.path())?;
+            Ok(file) => {
+                if !file.file_type().is_dir() {
+                    callback(file.path())?;
+                }
             }
         }
     }

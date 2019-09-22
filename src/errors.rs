@@ -1,4 +1,3 @@
-
 #[derive(Debug)]
 pub enum Error {
     /// Root folder doesn't exist or is not a directory
