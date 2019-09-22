@@ -105,11 +105,11 @@ impl MetaDatabase {
             id: PhotoId(row.get(0)?),
             relative_path: row.get(1)?,
             info: PhotoInfo {
-                created: row.get::<_, Option<String>>(2)?
-                    .map(|ts_str| DateTime::parse_from_rfc3339(&ts_str)
+                created: row.get::<_, Option<String>>(2)?.map(|ts_str| {
+                    DateTime::parse_from_rfc3339(&ts_str)
                         .expect("Database corrupted (invalid date in table `photos`)")
                         .with_timezone(&Utc)
-                    ),
+                }),
                 file_hash: row.get(3)?,
             },
         })

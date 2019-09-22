@@ -1,7 +1,7 @@
 use rusqlite::types::{FromSql, ToSql};
-use std::path::Path;
 use std::fmt;
 use std::io;
+use std::path::Path;
 
 mod jpeg;
 
@@ -25,7 +25,7 @@ impl Sha256Hash {
     }
 
     pub fn from_file(filename: &Path) -> io::Result<Sha256Hash> {
-        use io::{Read};
+        use io::Read;
         use sha2::digest::{FixedOutput, Input};
 
         let mut file = std::fs::File::open(filename)?;

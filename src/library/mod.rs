@@ -1,8 +1,12 @@
-use log::{warn};
+use log::warn;
+use std::io;
 use std::path::{Path, PathBuf};
 
 pub mod meta;
 pub mod thumb;
+
+use self::meta::PhotoId;
+use crate::formats::{ImageFormat, PhotoInfo};
 
 #[derive(Debug)]
 pub struct LibraryFiles {
@@ -92,6 +96,77 @@ impl Library {
     pub fn meta_db(&self) -> &meta::MetaDatabase {
         &self.meta_db
     }
+}
+
+/// Helper for inserting photos in bulk.
+pub struct MetaInserter<'a> {
+    root_dir: PathBuf,
+    meta_db: &'a meta::MetaDatabase,
+    formats: Vec<Box<dyn ImageFormat>>,
+}
+
+impl<'a> MetaInserter<'a> {
+    pub fn new(
+        root_dir: &Path,
+        meta_db: &'a meta::MetaDatabase,
+        formats: Vec<Box<dyn ImageFormat>>,
+    ) -> Self {
+        Self {
+            root_dir: root_dir.to_path_buf(),
+            meta_db,
+            formats,
+        }
+    }
+
+    pub fn insert_idempotent(&self, filename: &Path) -> Result<InsertResult, failure::Error> {
+        let relative = filename.strip_prefix(&self.root_dir).unwrap();
+        match relative.to_str() {
+            None =>
+            // TODO: support weird encodings in paths
+            {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "non-UTF-8 representable path not supported",
+                )
+                .into())
+            }
+            Some(path_str) => {
+                let existing = self.meta_db.query_photo_id_by_path(path_str)?;
+                if let Some(photo_id) = existing {
+                    Ok(InsertResult::Exists { id: photo_id })
+                } else {
+                    let info = self
+                        .formats
+                        .iter()
+                        .filter(|format| format.supported_extension(filename))
+                        .find_map(|format| match format.read_info(filename) {
+                            Ok(info) => Some(info),
+                            Err(err) => {
+                                warn!("{} error: {}", format.name(), err);
+                                None
+                            }
+                        });
+
+                    if let Some(info) = info {
+                        let id = self.meta_db.insert_photo(path_str, &info)?;
+                        Ok(InsertResult::Inserted { id, info })
+                    } else {
+                        Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "File format is not supported",
+                        )
+                        .into())
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum InsertResult {
+    Inserted { id: PhotoId, info: PhotoInfo },
+    Exists { id: PhotoId },
 }
 
 pub fn scan_library(path: &Path) -> impl Iterator<Item = walkdir::Result<walkdir::DirEntry>> {

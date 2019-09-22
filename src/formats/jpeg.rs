@@ -1,5 +1,5 @@
 use super::{ImageFormat, PhotoInfo, Sha256Hash};
-use log::{debug};
+use log::debug;
 use std::path::Path;
 
 pub struct JpegFormat;
@@ -16,29 +16,25 @@ impl ImageFormat for JpegFormat {
     }
 
     fn read_info(&self, filename: &Path) -> std::io::Result<PhotoInfo> {
-        let created = read_exif_datetime(filename)
-        .or_else(|| {
-            filename.metadata()
-            .and_then(|meta| meta.created())
-            .map(chrono::DateTime::from)
-            .ok()
+        let created = read_exif_datetime(filename).or_else(|| {
+            filename
+                .metadata()
+                .and_then(|meta| meta.created())
+                .map(chrono::DateTime::from)
+                .ok()
         });
 
-        let file_hash =
-            Sha256Hash::from_file(filename)?;
+        let file_hash = Sha256Hash::from_file(filename)?;
 
-        Ok(PhotoInfo {
-            created,
-            file_hash,
-        })
+        Ok(PhotoInfo { created, file_hash })
     }
 }
 
 fn read_exif_datetime(filename: &Path) -> Option<chrono::DateTime<chrono::Utc>> {
     let file = std::fs::File::open(filename).ok()?;
-    let exif_reader =
-        exif::Reader::new(&mut std::io::BufReader::new(file))
-        .map(Some).unwrap_or_else(|exif_err| {
+    let exif_reader = exif::Reader::new(&mut std::io::BufReader::new(file))
+        .map(Some)
+        .unwrap_or_else(|exif_err| {
             debug!(
                 "Could not read EXIF from {}: {}",
                 filename.to_string_lossy(),

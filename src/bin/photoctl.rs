@@ -1,5 +1,5 @@
 use photo_archive::formats;
-use photo_archive::library::{meta, thumb, LibraryFiles};
+use photo_archive::library::{meta, thumb, LibraryFiles, MetaInserter};
 
 use directories;
 use failure::bail;
@@ -183,8 +183,9 @@ fn photos_list(library: &LibraryFiles) -> Result<(), failure::Error> {
 }
 
 fn photos_scan(library: &LibraryFiles) -> Result<(), failure::Error> {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::Arc;
+    use photo_archive::library::InsertResult;
 
     let interrupted = Arc::new(AtomicBool::new(false));
     let r = interrupted.clone();
@@ -196,78 +197,108 @@ fn photos_scan(library: &LibraryFiles) -> Result<(), failure::Error> {
     }
 
     let meta_db = meta::MetaDatabase::open_or_create(&library.meta_db_file)?;
-    let supported_formats = formats::load_formats();
 
-    let walker = photo_archive::library::scan_library(&library.root_dir);
-    let file_entries = walker.filter_map(|result| match result {
-        Ok(entry) => {
-            if entry.file_type().is_dir() {
-                None
-            } else {
-                Some(entry)
-            }
-        }
-        Err(err) => {
-            warn!("Error scanning library: {}", err);
-            None
-        }
-    });
+    let progress_bar = indicatif::ProgressBar::new(0)
+        .with_style(indicatif::ProgressStyle::default_bar()
+            .progress_chars("=> ")
+            .template("{msg} [{wide_bar}] {pos}/{len} ({eta})"));
+    progress_bar.set_message("Scanning");
+    
+    let (file_sender, file_receiver) = crossbeam_channel::unbounded();
 
-    let mut photos_total = 0;
-    let mut photos_added = 0;
-    let mut photos_failed = 0;
-
-    for entry in file_entries {
-        if interrupted.load(Ordering::SeqCst) {
-            info!("Scanning interrupted");
-            break;
-        }
-        
-        photos_total += 1;
-
-        let photo_path = entry.into_path();
-        let relative = photo_path.strip_prefix(&library.root_dir).unwrap();
-        match relative.to_str() {
-            None => {
-                photos_failed += 1;
-                warn!(
-                    "Could not read photo with non-UTF-8 path {}",
-                    relative.to_string_lossy()
-                );
-            }
-            Some(path_str) => {
-                if meta_db.query_photo_id_by_path(path_str)?.is_none() {
-                    info!("New photo: {}", relative.to_string_lossy());
-
-                    let info = supported_formats
-                        .iter()
-                        .filter(|format| format.supported_extension(&photo_path))
-                        .find_map(|format| match format.read_info(&photo_path) {
-                            Ok(info) => Some(info),
-                            Err(err) => {
-                                error!("{} error: {}", format.name(), err);
-                                None
-                            }
-                        });
-
-                    if let Some(info) = info {
-                        photos_added += 1;
-                        meta_db.insert_photo(path_str, &info)?;
+    let scanner_thread = {
+        let root_dir = library.root_dir.clone();
+        let interrupted_scanner = interrupted.clone();
+        let scan_progress_bar = progress_bar.clone();
+        std::thread::spawn(move || {
+            let walker = photo_archive::library::scan_library(&root_dir);
+            let file_entries = walker.filter_map(|result| match result {
+                Ok(entry) => {
+                    if entry.file_type().is_dir() {
+                        None
                     } else {
-                        photos_failed += 1;
-                        error!("Failed to index photo {}", relative.to_string_lossy());
+                        Some(entry.into_path())
                     }
-                };
-            }
-        }
+                }
+                Err(err) => {
+                    warn!("Error scanning library: {}", err);
+                    None
+                }
+            });
 
-        debug!("Processing photo {}", photo_path.to_string_lossy());
+            for filename in file_entries {
+                if interrupted_scanner.load(Ordering::SeqCst) {
+                    break;
+                }
+                scan_progress_bar.inc_length(1);
+                if let Err(_) = file_sender.send(filename) {
+                    break;
+                }
+            }
+        })
+    };
+
+    let photos_total = Arc::new(AtomicUsize::new(0));
+    let photos_added = Arc::new(AtomicUsize::new(0));
+    let photos_failed = Arc::new(AtomicUsize::new(0));
+
+    let inserter_thread = {
+        let root_dir = library.root_dir.clone();
+        let interrupted_inserter = interrupted.clone();
+        let this_photos_total = photos_total.clone();
+        let this_photos_added = photos_added.clone();
+        let this_photos_failed = photos_failed.clone();
+        let this_receiver = file_receiver.clone();
+        let insert_progress_bar = progress_bar.clone();
+        std::thread::spawn(move || {
+            let supported_formats = formats::load_formats();
+            let inserter = MetaInserter::new(
+                &root_dir,
+                &meta_db,
+                supported_formats
+            );
+
+            for filename in this_receiver.into_iter() {
+                if interrupted_inserter.load(Ordering::SeqCst) {
+                    break;
+                }
+
+                this_photos_total.fetch_add(1, Ordering::SeqCst);
+
+                match inserter.insert_idempotent(&filename) {
+                    Err(err) => {
+                        this_photos_failed.fetch_add(1, Ordering::SeqCst);
+                        error!("Error for {}: {}", filename.to_string_lossy(), err);
+                    },
+                    Ok(InsertResult::Inserted { .. }) => {
+                        this_photos_added.fetch_add(1, Ordering::SeqCst);
+                    },
+                    Ok(_) => {},
+                }
+                insert_progress_bar.inc(1);
+            }
+        })
+    };
+
+    let scanner_result = scanner_thread.join();
+    let inserter_result = inserter_thread.join();
+
+    progress_bar.finish_and_clear();
+
+    if scanner_result.err().or(inserter_result.err()).is_some() {
+        error!("Some thread panicked");
     }
 
     info!(
         "Scanning done ({} total, {} added, {} failed)",
-        photos_total, photos_added, photos_failed
+        photos_total.load(Ordering::SeqCst),
+        photos_added.load(Ordering::SeqCst),
+        photos_failed.load(Ordering::SeqCst),
     );
 
-    Ok(())
+    if interrupted.load(Ordering::SeqCst) {
+        Err(std::io::Error::from(std::io::ErrorKind::Interrupted).into())
+    } else {
+        Ok(())
+    }
 }
