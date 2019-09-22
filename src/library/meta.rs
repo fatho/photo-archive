@@ -71,7 +71,7 @@ impl MetaDatabase {
             .map_err(Into::into)
     }
 
-    pub fn all_photos(&self) -> Result<std::vec::Vec<PhotoId>> {
+    pub fn all_photo_ids(&self) -> Result<std::vec::Vec<PhotoId>> {
         let mut stmt = self
             .db
             .connection()
@@ -80,6 +80,28 @@ impl MetaDatabase {
             .query_map(NO_PARAMS, |row| row.get(0).map(PhotoId))?
             .collect();
         ls.map_err(Into::into)
+    }
+
+    pub fn query_all_photos(&self) -> Result<Vec<Photo>> {
+        let mut stmt = self
+            .db
+            .connection()
+            .prepare("SELECT id, rel_path, created FROM photos ORDER BY created DESC")?;
+        let ls: rusqlite::Result<Vec<Photo>> = stmt
+            .query_map(NO_PARAMS, Self::map_photo_row)?
+            .collect();
+        ls.map_err(Into::into)
+    }
+
+    pub fn query_count(&self) -> Result<u32> {
+        self.db
+            .connection()
+            .query_row(
+                "SELECT COUNT(*) FROM photos",
+                NO_PARAMS,
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
     }
 
     fn map_photo_row(row: &rusqlite::Row) -> rusqlite::Result<Photo> {

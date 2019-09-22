@@ -97,11 +97,11 @@ where
             .optional()?;
         let cur_version = match cur_version_opt {
             Some(version) => {
-                info!("Found database version {}", version);
+                debug!("Found database version {}", version);
                 Version(version)
             }
             None => {
-                info!("Found blank database");
+                debug!("Found blank database");
                 let version = Version(0);
                 conn.execute("INSERT INTO version(version) VALUES (?1)", &[version.0])?;
                 version
