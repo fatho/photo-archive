@@ -21,7 +21,7 @@ impl Thumbnail {
     pub fn generate<P: AsRef<Path>>(
         original_file: P,
         size: u32,
-    ) -> crate::errors::Result<Thumbnail> {
+    ) -> Result<Thumbnail, failure::Error> {
         let img = image::open(original_file)?;
 
         let width = img.width();
@@ -66,7 +66,7 @@ impl ThumbDatabase {
     pub fn open_or_create<P: AsRef<Path>>(path: P) -> database::Result<ThumbDatabase> {
         let mut db = database::Database::open_or_create(path)?;
         db.upgrade()?;
-        Ok(Self { db: db })
+        Ok(Self { db })
     }
 
     pub fn get_thumbnail_state(&self, photo_id: PhotoId) -> database::Result<ThumbnailState> {

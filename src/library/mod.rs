@@ -1,9 +1,7 @@
-use log::{debug, error, info, warn};
-use std::io;
+use log::{warn};
 use std::path::{Path, PathBuf};
 
 pub mod meta;
-pub mod photo;
 pub mod thumb;
 
 #[derive(Debug)]
@@ -49,73 +47,6 @@ pub struct Library {
 }
 
 impl Library {
-    pub fn open_or_create(files: &LibraryFiles) -> Result<Library, failure::Error> {
-        info!("Opening library '{}'", files.root_dir.to_string_lossy());
-
-        if files.root_exists() {
-            // open sqlite photo database
-            let meta_db = meta::MetaDatabase::open_or_create(&files.meta_db_file)?;
-            let thumb_db = thumb::ThumbDatabase::open_or_create(&files.thumb_db_file)?;
-
-            let archive = Self {
-                root_dir: files.root_dir.clone(),
-                meta_db: meta_db,
-                thumb_db: thumb_db,
-            };
-            Ok(archive)
-        } else {
-            Err(io::Error::from(io::ErrorKind::NotFound).into())
-        }
-    }
-
-    // pub fn refresh(&self) -> Result<(), failure::Error> {
-    //     info!("Rescanning library");
-
-    //     let root_path = self.root_dir.as_ref();
-    //     scan_library(root_path, |photo_path| {
-    //         let relative = photo_path.strip_prefix(root_path).unwrap();
-    //         match relative.to_str() {
-    //             None => error!(
-    //                 "Could not read photo with non-UTF-8 path {}",
-    //                 relative.to_string_lossy()
-    //             ),
-    //             Some(path_str) => {
-    //                 let photo_id = if let Some(existing_id) =
-    //                     self.meta_db.find_photo_by_path(path_str)?
-    //                 {
-    //                     Some(existing_id)
-    //                 } else {
-    //                     info!("New photo: {}", relative.to_string_lossy().as_ref());
-
-    //                     // load info, do not fail whole operation on error, just log
-    //                     match photo::Info::load(photo_path) {
-    //                         Ok(info) => Some(self.meta_db.insert_photo(path_str, info.created())?),
-    //                         Err(err) => {
-    //                             error!("Could not read photo: {}", err);
-    //                             None
-    //                         }
-    //                     }
-    //                 };
-    //                 if let Some(photo_id) = photo_id {
-    //                     // generate thumbnail
-    //                     // TODO: parallelize generating thumbnails so UI shows immediately
-    //                     match self.thumb_db.get_thumbnail_state(photo_id)? {
-    //                         thumb::ThumbnailState::Error => {
-    //                             info!("Generating thumbnail failed ealier, skipping!")
-    //                         }
-    //                         thumb::ThumbnailState::Present => debug!("Thumbnail already exists"),
-    //                         thumb::ThumbnailState::Absent => {
-    //                             info!("Generating thumbnail!");
-    //                             self.generate_thumbnail_impl(photo_path, photo_id)?;
-    //                         }
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //         Ok(())
-    //     })
-    // }
-
     fn generate_thumbnail_impl(
         &self,
         photo_path: &Path,
@@ -163,21 +94,19 @@ impl Library {
     }
 }
 
-pub fn scan_library(path: &Path) -> impl Iterator<Item=walkdir::Result<walkdir::DirEntry>> {
+pub fn scan_library(path: &Path) -> impl Iterator<Item = walkdir::Result<walkdir::DirEntry>> {
     let photo_predicate = |entry: &walkdir::DirEntry| {
         let entry_type = entry.file_type();
         let name = entry.file_name().to_str();
-        let is_hidden = name.map_or(false, |s| s.starts_with("."));
+        let is_hidden = name.map_or(false, |s| s.starts_with('.'));
         let is_photo = name
             .and_then(|s| s.split('.').next_back())
             .map_or(false, |s| s == "jpg" || s == "JPG");
         !is_hidden && (entry_type.is_dir() || is_photo)
     };
 
-    let dirwalker = walkdir::WalkDir::new(path)
+    walkdir::WalkDir::new(path)
         .follow_links(true)
         .into_iter()
-        .filter_entry(photo_predicate);
-
-    dirwalker
+        .filter_entry(photo_predicate)
 }

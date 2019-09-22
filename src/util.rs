@@ -1,6 +1,6 @@
-use std::path::Path;
-use std::io;
 use log::debug;
+use std::io;
+use std::path::Path;
 
 #[derive(Debug, Clone)]
 pub struct Point {
@@ -68,7 +68,6 @@ impl Rect {
         }
     }
 }
-
 
 /// Create a backup of a file, appending `<NUM>.bak` to the while
 /// with `<NUM>` being the smallest number such that the resulting file name doesn't exist.

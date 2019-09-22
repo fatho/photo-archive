@@ -1,8 +1,9 @@
-use photo_archive::library::{LibraryFiles, meta, thumb, photo};
+use photo_archive::formats;
+use photo_archive::library::{meta, thumb, LibraryFiles};
 
 use directories;
 use failure::bail;
-use log::{debug, error, warn, info};
+use log::{debug, error, info, warn};
 use std::path::{Path, PathBuf};
 use structopt::StructOpt;
 
@@ -30,8 +31,8 @@ enum Command {
     /// Operate on the photo database
     Photos {
         #[structopt(subcommand)]
-        command: PhotosCommand
-    }
+        command: PhotosCommand,
+    },
 }
 
 #[derive(Debug, StructOpt)]
@@ -74,18 +75,17 @@ fn run(opts: GlobalOpts) -> Result<(), failure::Error> {
     });
 
     let library_files = LibraryFiles::new(&photo_root);
-    info!("Using library: {}", library_files.root_dir.to_string_lossy());
+    info!(
+        "Using library: {}",
+        library_files.root_dir.to_string_lossy()
+    );
 
     match opts.command {
-        Command::Init { overwrite } =>
-            init(&library_files, overwrite),
-        Command::Status =>
-            status(&library_files),
+        Command::Init { overwrite } => init(&library_files, overwrite),
+        Command::Status => status(&library_files),
         Command::Photos { command } => match command {
-            PhotosCommand::List =>
-                photos_list(&library_files),
-            PhotosCommand::Scan =>
-                photos_scan(&library_files),
+            PhotosCommand::List => photos_list(&library_files),
+            PhotosCommand::Scan => photos_scan(&library_files),
         },
     }
 }
@@ -135,16 +135,24 @@ fn status(library_files: &LibraryFiles) -> Result<(), failure::Error> {
 
     // TODO: open databases for status as readonly
 
-    print_status("Meta", &library_files.meta_db_file, library_files.meta_db_exists());
+    print_status(
+        "Meta",
+        &library_files.meta_db_file,
+        library_files.meta_db_exists(),
+    );
     if library_files.meta_db_exists() {
         let meta_db = meta::MetaDatabase::open_or_create(&library_files.meta_db_file)?;
         match meta_db.query_count() {
             Ok(count) => println!("  Photo count: {}", count),
             Err(err) => println!("  Photo count: n/a ({})", err),
-        }        
+        }
     }
 
-    print_status("Thumb", &library_files.thumb_db_file, library_files.thumb_db_exists());
+    print_status(
+        "Thumb",
+        &library_files.thumb_db_file,
+        library_files.thumb_db_exists(),
+    );
     if library_files.thumb_db_exists() {
         let _thumb_db = meta::MetaDatabase::open_or_create(&library_files.meta_db_file)?;
     }
@@ -153,13 +161,21 @@ fn status(library_files: &LibraryFiles) -> Result<(), failure::Error> {
 }
 
 fn photos_list(library: &LibraryFiles) -> Result<(), failure::Error> {
+    use std::borrow::Cow;
+
     let meta_db = meta::MetaDatabase::open_or_create(&library.meta_db_file)?;
 
     let photos = meta_db.query_all_photos()?;
 
-    println!("ID\tRelative path\tCreated");
+    println!("ID\tRelative path\tCreated\tSHA-256");
     for photo in photos.iter() {
-        println!("{}\t{}\t{}", photo.id.0, photo.relative_path, photo.created);
+        println!(
+            "{}\t{}\t{}\t{}",
+            photo.id.0,
+            photo.relative_path,
+            photo.info.created.map_or(Cow::Borrowed("-"), |ts| Cow::Owned(ts.to_rfc3339())),
+            photo.info.file_hash
+        );
     }
     println!("(total: {})", photos.len());
 
@@ -167,8 +183,8 @@ fn photos_list(library: &LibraryFiles) -> Result<(), failure::Error> {
 }
 
 fn photos_scan(library: &LibraryFiles) -> Result<(), failure::Error> {
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     let interrupted = Arc::new(AtomicBool::new(false));
     let r = interrupted.clone();
@@ -180,33 +196,34 @@ fn photos_scan(library: &LibraryFiles) -> Result<(), failure::Error> {
     }
 
     let meta_db = meta::MetaDatabase::open_or_create(&library.meta_db_file)?;
+    let supported_formats = formats::load_formats();
 
     let walker = photo_archive::library::scan_library(&library.root_dir);
-    let file_entries = walker
-        .filter_map(|result| match result {
-            Ok(entry) =>
-                if entry.file_type().is_dir() {
-                    None
-                } else {
-                    Some(entry)
-                },
-            Err(err) => {
-                warn!("Error scanning library: {}", err);
+    let file_entries = walker.filter_map(|result| match result {
+        Ok(entry) => {
+            if entry.file_type().is_dir() {
                 None
+            } else {
+                Some(entry)
             }
-        });
+        }
+        Err(err) => {
+            warn!("Error scanning library: {}", err);
+            None
+        }
+    });
 
     let mut photos_total = 0;
     let mut photos_added = 0;
     let mut photos_failed = 0;
 
     for entry in file_entries {
-        photos_total += 1;
-
         if interrupted.load(Ordering::SeqCst) {
             info!("Scanning interrupted");
             break;
         }
+        
+        photos_total += 1;
 
         let photo_path = entry.into_path();
         let relative = photo_path.strip_prefix(&library.root_dir).unwrap();
@@ -217,31 +234,40 @@ fn photos_scan(library: &LibraryFiles) -> Result<(), failure::Error> {
                     "Could not read photo with non-UTF-8 path {}",
                     relative.to_string_lossy()
                 );
-            },
+            }
             Some(path_str) => {
-                if meta_db.find_photo_by_path(path_str)?.is_none()
-                {
-                    info!("New photo: {}", relative.to_string_lossy().as_ref());
+                if meta_db.query_photo_id_by_path(path_str)?.is_none() {
+                    info!("New photo: {}", relative.to_string_lossy());
 
-                    // load info, do not fail whole operation on error, just log
-                    match photo::Info::load(&photo_path) {
-                        Ok(info) => {
-                            photos_added += 1;
-                            meta_db.insert_photo(path_str, info.created())?;
-                        },
-                        Err(err) => {
-                            photos_failed += 1;
-                            error!("Could not read photo: {}", err);
-                        }
+                    let info = supported_formats
+                        .iter()
+                        .filter(|format| format.supported_extension(&photo_path))
+                        .find_map(|format| match format.read_info(&photo_path) {
+                            Ok(info) => Some(info),
+                            Err(err) => {
+                                error!("{} error: {}", format.name(), err);
+                                None
+                            }
+                        });
+
+                    if let Some(info) = info {
+                        photos_added += 1;
+                        meta_db.insert_photo(path_str, &info)?;
+                    } else {
+                        photos_failed += 1;
+                        error!("Failed to index photo {}", relative.to_string_lossy());
                     }
                 };
             }
         }
-        
+
         debug!("Processing photo {}", photo_path.to_string_lossy());
     }
 
-    info!("Scanning done ({} total, {} added, {} failed)", photos_total, photos_added, photos_failed);
+    info!(
+        "Scanning done ({} total, {} added, {} failed)",
+        photos_total, photos_added, photos_failed
+    );
 
     Ok(())
 }

@@ -51,10 +51,7 @@ where
             version: current_version,
         })?;
 
-        Ok(Self {
-            conn: conn,
-            schema: schema,
-        })
+        Ok(Self { conn, schema })
     }
 
     pub fn connection(&self) -> &Connection {

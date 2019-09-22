@@ -10,6 +10,7 @@ use rusqlite::{OptionalExtension, Transaction, NO_PARAMS};
 
 use crate::database;
 use crate::database::{Database, Schema};
+use crate::formats::PhotoInfo;
 
 /// Database containing metadata about photos.
 #[derive(Debug)]
@@ -27,21 +28,21 @@ pub struct PhotoId(pub i64);
 pub struct Photo {
     pub id: PhotoId,
     pub relative_path: String,
-    pub created: DateTime<Utc>,
+    pub info: PhotoInfo,
 }
 
 impl MetaDatabase {
     pub fn open_or_create<P: AsRef<Path>>(path: P) -> Result<MetaDatabase> {
         let mut db = database::Database::open_or_create(path)?;
         db.upgrade()?;
-        Ok(Self { db: db })
+        Ok(Self { db })
     }
 
-    pub fn insert_photo(&self, path_str: &str, created: DateTime<Utc>) -> Result<PhotoId> {
-        let created_str = created.to_rfc3339(); // ISO formatted date
+    pub fn insert_photo(&self, path_str: &str, info: &PhotoInfo) -> Result<PhotoId> {
+        let created_str = info.created.map(|ts| ts.to_rfc3339()); // ISO formatted date
         self.db.connection().execute(
-            "INSERT INTO photos(rel_path, created) VALUES (?1, ?2)",
-            &[&path_str as &dyn ToSql, &created_str],
+            "INSERT INTO photos(rel_path, created, file_hash) VALUES (?1, ?2, ?3)",
+            &[&path_str as &dyn ToSql, &created_str, &info.file_hash],
         )?;
 
         Ok(PhotoId(self.db.connection().last_insert_rowid()))
@@ -51,7 +52,7 @@ impl MetaDatabase {
         self.db
             .connection()
             .query_row(
-                "SELECT id, rel_path, created FROM photos WHERE id = ?1",
+                "SELECT id, rel_path, created, file_hash FROM photos WHERE id = ?1",
                 &[id.0],
                 Self::map_photo_row,
             )
@@ -59,7 +60,7 @@ impl MetaDatabase {
             .map_err(Into::into)
     }
 
-    pub fn find_photo_by_path(&self, path_str: &str) -> Result<Option<PhotoId>> {
+    pub fn query_photo_id_by_path(&self, path_str: &str) -> Result<Option<PhotoId>> {
         self.db
             .connection()
             .query_row(
@@ -71,7 +72,7 @@ impl MetaDatabase {
             .map_err(Into::into)
     }
 
-    pub fn all_photo_ids(&self) -> Result<std::vec::Vec<PhotoId>> {
+    pub fn query_all_photo_ids(&self) -> Result<std::vec::Vec<PhotoId>> {
         let mut stmt = self
             .db
             .connection()
@@ -86,21 +87,16 @@ impl MetaDatabase {
         let mut stmt = self
             .db
             .connection()
-            .prepare("SELECT id, rel_path, created FROM photos ORDER BY created DESC")?;
-        let ls: rusqlite::Result<Vec<Photo>> = stmt
-            .query_map(NO_PARAMS, Self::map_photo_row)?
-            .collect();
+            .prepare("SELECT id, rel_path, created, file_hash FROM photos ORDER BY created DESC")?;
+        let ls: rusqlite::Result<Vec<Photo>> =
+            stmt.query_map(NO_PARAMS, Self::map_photo_row)?.collect();
         ls.map_err(Into::into)
     }
 
     pub fn query_count(&self) -> Result<u32> {
         self.db
             .connection()
-            .query_row(
-                "SELECT COUNT(*) FROM photos",
-                NO_PARAMS,
-                |row| row.get(0),
-            )
+            .query_row("SELECT COUNT(*) FROM photos", NO_PARAMS, |row| row.get(0))
             .map_err(Into::into)
     }
 
@@ -108,9 +104,14 @@ impl MetaDatabase {
         Ok(Photo {
             id: PhotoId(row.get(0)?),
             relative_path: row.get(1)?,
-            created: DateTime::parse_from_rfc3339(row.get::<_, String>(2)?.as_ref())
-                .expect("Database corrupted (invalid date in table `photos`)")
-                .with_timezone(&Utc),
+            info: PhotoInfo {
+                created: row.get::<_, Option<String>>(2)?
+                    .map(|ts_str| DateTime::parse_from_rfc3339(&ts_str)
+                        .expect("Database corrupted (invalid date in table `photos`)")
+                        .with_timezone(&Utc)
+                    ),
+                file_hash: row.get(3)?,
+            },
         })
     }
 }
@@ -143,7 +144,8 @@ impl Schema for PhotoDbSchema {
                 tx.execute("CREATE TABLE photos(
                     id               INTEGER PRIMARY KEY,
                     rel_path         TEXT NOT NULL, -- Relative path to the library root. SQLite uses UTF-8 by default, which cannot represent all paths.
-                    created          TEXT NOT NULL  -- Time the photo was created
+                    created          TEXT,          -- Time the photo was created
+                    file_hash        BLOB NOT NULL  -- Hash of the photo file
                     )", NO_PARAMS)?;
                 tx.execute(
                     "CREATE UNIQUE INDEX photos_rel_path_index ON photos(rel_path)",
