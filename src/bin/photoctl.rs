@@ -187,17 +187,19 @@ fn photos_list(library: &LibraryFiles) -> Result<(), failure::Error> {
 
     let photos = meta_db.query_all_photos()?;
 
-    println!("ID\tRelative path\tCreated\tSHA-256");
+    println!("total {}", photos.len());
+    println!("ID\tCreated\tSHA-256\tRelative path");
     for photo in photos.iter() {
         println!(
-            "{}\t{}\t{}\t{}",
+            "{}\t{}\t{:.8}..\t{}",
             photo.id.0,
-            photo.relative_path,
             photo.info.created.map_or(Cow::Borrowed("-"), |ts| Cow::Owned(ts.to_rfc3339())),
-            photo.info.file_hash
+            photo.info.file_hash,
+            photo.relative_path,
         );
     }
-    println!("(total: {})", photos.len());
+    if console::user_attended() {
+    }
 
     Ok(())
 }

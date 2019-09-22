@@ -50,8 +50,9 @@ impl Sha256Hash {
 
 impl fmt::Display for Sha256Hash {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        for b in self.as_bytes() {
-            write!(formatter, "{:x}", b)?;
+        let num_bytes = formatter.precision().unwrap_or(std::usize::MAX);
+        for b in self.as_bytes().iter().take(num_bytes) {
+            write!(formatter, "{:02x}", b)?;
         }
         Ok(())
     }
