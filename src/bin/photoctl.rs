@@ -33,6 +33,11 @@ enum Command {
         #[structopt(subcommand)]
         command: PhotosCommand,
     },
+    /// Operate on the thumbnail database
+    Thumbnails {
+        #[structopt(subcommand)]
+        command: ThumbnailsCommand
+    }
 }
 
 #[derive(Debug, StructOpt)]
@@ -41,6 +46,20 @@ enum PhotosCommand {
     List,
     /// Scan the library for new and updated photos.
     Scan,
+}
+
+#[derive(Debug, StructOpt)]
+enum ThumbnailsCommand {
+    /// Remove all cached thumbnail images
+    Wipe,
+    /// Generate thumbnails for images in the photo database
+    Generate {
+        #[structopt(short, long)]
+        /// Generate thumbnails also for images that already have one.
+        regenerate: bool,
+    },
+    /// Remove cached thumbnails that are no longer referenced from a photo
+    Gc,
 }
 
 fn main() {
@@ -87,6 +106,7 @@ fn run(opts: GlobalOpts) -> Result<(), failure::Error> {
             PhotosCommand::List => photos_list(&library_files),
             PhotosCommand::Scan => photos_scan(&library_files),
         },
+        Command::Thumbnails { command } => Ok(()),
     }
 }
 
