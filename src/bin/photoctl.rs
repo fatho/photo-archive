@@ -1,10 +1,13 @@
 use photo_archive::formats;
 use photo_archive::library::{meta, thumb, LibraryFiles, MetaInserter};
+use photo_archive::clone;
 
 use directories;
 use failure::bail;
 use log::{debug, error, info, warn};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -45,7 +48,17 @@ enum PhotosCommand {
     /// List all photos in the database
     List,
     /// Scan the library for new and updated photos.
-    Scan,
+    Scan {
+        /// Enable parallel file scanning using as many threads as indicated,
+        /// in addition to the main thread that does the inserting.
+        /// Defaults to the number of CPUs if no number is specified.
+        /// If omitted, scanning and inserting into the database happens sequentially.
+        #[structopt(short, long)]
+        jobs: Option<Option<usize>>,
+        /// Also scan files that alrady exist in the database
+        #[structopt(short, long)]
+        all: bool,
+    },
 }
 
 #[derive(Debug, StructOpt)]
@@ -63,11 +76,11 @@ enum ThumbnailsCommand {
 }
 
 fn main() {
-    env_logger::init_from_env(
-        env_logger::Env::new()
-            .filter("PHOTOCTL_LOG")
-            .write_style("PHOTOCTL_LOG_STYLE"),
-    );
+    simplelog::TermLogger::init(
+        simplelog::LevelFilter::Info,
+        simplelog::Config::default(),
+        simplelog::TerminalMode::Stderr
+    ).unwrap();
 
     let opts = GlobalOpts::from_args();
 
@@ -85,7 +98,9 @@ fn main() {
 }
 
 fn run(opts: GlobalOpts) -> Result<(), failure::Error> {
-    let photo_root = opts.photo_root.unwrap_or_else(|| {
+    let mut context = AppContext::new(opts);
+
+    let photo_root = context.options.photo_root.clone().unwrap_or_else(|| {
         let user_dirs = directories::UserDirs::new().expect("Cannot access user directories");
         let photo_path = user_dirs
             .picture_dir()
@@ -99,14 +114,56 @@ fn run(opts: GlobalOpts) -> Result<(), failure::Error> {
         library_files.root_dir.to_string_lossy()
     );
 
-    match opts.command {
-        Command::Init { overwrite } => init(&library_files, overwrite),
+    match &context.options.command {
+        Command::Init { overwrite } => init(&library_files, *overwrite),
         Command::Status => status(&library_files),
         Command::Photos { command } => match command {
             PhotosCommand::List => photos_list(&library_files),
-            PhotosCommand::Scan => photos_scan(&library_files),
+            PhotosCommand::Scan { jobs, all } => {
+                const MAX_SCAN_THREADS: usize = 10;
+                let num_threads = jobs.unwrap_or(Some(0)).unwrap_or_else(|| num_cpus::get());
+                if num_threads > MAX_SCAN_THREADS {
+                    warn!("Cannot use more than {} threads for scanning", MAX_SCAN_THREADS);
+                }
+                let scan_all = *all;
+                photos_scan(&mut context, &library_files, num_threads.min(MAX_SCAN_THREADS), scan_all)
+            },
         },
         Command::Thumbnails { command } => Ok(()),
+    }
+}
+
+struct AppContext {
+    interrupted: Arc<AtomicBool>,
+    options: GlobalOpts,
+}
+
+impl AppContext {
+    /// Create a new application context.
+    /// This also installs a Ctrl+C handler.
+    fn new(options: GlobalOpts) -> Self {
+        let interrupted = Arc::new(AtomicBool::new(false));
+
+        let handler_result = ctrlc::set_handler(clone!(interrupted => move || {
+            interrupted.store(true, Ordering::SeqCst);
+            info!("Interruption received");
+        }));
+
+        if let Err(err) = handler_result {
+            warn!("Error setting Ctrl+C handler, proceeding anyway: {}", err)
+        };
+
+        Self { interrupted, options }
+    }
+
+    /// Check whether the process has received an interruption signal (SIGINT on linux),
+    /// and fail if that is the case.
+    fn check_interrupted(&self) -> std::io::Result<()> {
+        if self.interrupted.load(Ordering::SeqCst) {
+            Err(std::io::Error::from(std::io::ErrorKind::Interrupted))
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -204,123 +261,208 @@ fn photos_list(library: &LibraryFiles) -> Result<(), failure::Error> {
     Ok(())
 }
 
-fn photos_scan(library: &LibraryFiles) -> Result<(), failure::Error> {
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use std::sync::Arc;
-    use photo_archive::library::InsertResult;
+#[derive(Clone)]
+struct ScanStatCollector {
+    /// The total number of photo files that were seen during collection
+    total: usize,
+    /// The number of photo files that were skipped because they already exist in the database
+    skipped: usize,
+    /// The number of photo files that were added to the database
+    added: usize,
+    /// The number of photo files that could not be added to the database
+    failed: usize,
+}
 
-    let interrupted = Arc::new(AtomicBool::new(false));
-    let r = interrupted.clone();
-
-    if let Err(err) = ctrlc::set_handler(move || {
-        r.store(true, Ordering::SeqCst);
-    }) {
-        warn!("Error setting Ctrl+C handler, proceeding anyway: {}", err)
+impl ScanStatCollector {
+    pub fn new() -> Self {
+        Self {
+            total: 0,
+            skipped: 0,
+            added: 0,
+            failed: 0,
+        }
     }
 
+    pub fn inc_total(&mut self) {
+        self.total += 1;
+    }
+
+    pub fn inc_skipped(&mut self) {
+        self.skipped += 1;
+    }
+
+    pub fn inc_added(&mut self) {
+        self.added += 1;
+    }
+
+    pub fn inc_failed(&mut self) {
+        self.failed += 1;
+    }
+
+    pub fn total(&self) -> usize {
+        self.total
+    }
+
+    pub fn skipped(&self) -> usize {
+        self.skipped
+    }
+
+    pub fn added(&self) -> usize {
+        self.added
+    }
+
+    pub fn failed(&self) -> usize {
+        self.failed
+    }
+}
+
+fn photos_scan(context: &mut AppContext, library: &LibraryFiles, num_scan_threads: usize, all: bool) -> Result<(), failure::Error> {
+    use photo_archive::library::PhotoPath;
+    use photo_archive::formats::PhotoInfo;
+    use photo_archive::library::meta::PhotoId;
+    use std::sync::mpsc;
+
+    type ScanResult = (Option<PhotoId>, PhotoPath, Result<PhotoInfo, std::io::Error>);
+
     let meta_db = meta::MetaDatabase::open_or_create(&library.meta_db_file)?;
+    let mut stats = ScanStatCollector::new();
+
+    // STEP 1 - Collect files
+
+    let collect_progress_bar = indicatif::ProgressBar::new_spinner();
+    collect_progress_bar.set_message("Collecting files");
+
+    let walker = photo_archive::library::scan_library(&library.root_dir)
+    .filter_map(|result| match result {
+        Ok(entry) => {
+            if entry.file_type().is_dir() {
+                None
+            } else {
+                Some(entry)
+            }
+        }
+        Err(err) => {
+            warn!("Error scanning library: {}", err);
+            None
+        }
+    });
+    let mut files_to_scan = Vec::new();
+    for entry in walker {
+        stats.inc_total();
+
+        collect_progress_bar.tick();
+        context.check_interrupted()?;
+        match PhotoPath::new(&library.root_dir, entry.path()) {
+            Ok(path) => {
+                let existing = meta_db.query_photo_id_by_path(&path.relative_path)?;
+                if all || existing.is_none() {
+                    files_to_scan.push((existing, path));
+                } else {
+                    stats.inc_skipped();
+                }
+            },
+            Err(err) => {
+                stats.inc_failed();
+                warn!("Failed to collect {}: {}", entry.path().to_string_lossy(), err);
+            }
+        }
+    }
+
+    collect_progress_bar.finish_and_clear();
+    info!("Collected {} files ({} skipped, {} failed)", files_to_scan.len(), stats.skipped(), stats.failed());
+
+    // STEP 2 - Scan files
 
     let progress_bar = indicatif::ProgressBar::new(0)
         .with_style(indicatif::ProgressStyle::default_bar()
             .progress_chars("=> ")
             .template("{msg} [{wide_bar}] {pos}/{len} ({eta})"));
+    progress_bar.set_length(files_to_scan.len() as u64);
     progress_bar.set_message("Scanning");
-    
-    let (file_sender, file_receiver) = crossbeam_channel::unbounded();
 
-    let scanner_thread = {
-        let root_dir = library.root_dir.clone();
-        let interrupted_scanner = interrupted.clone();
-        let scan_progress_bar = progress_bar.clone();
-        std::thread::spawn(move || {
-            let walker = photo_archive::library::scan_library(&root_dir);
-            let file_entries = walker.filter_map(|result| match result {
-                Ok(entry) => {
-                    if entry.file_type().is_dir() {
-                        None
-                    } else {
-                        Some(entry.into_path())
+    let insert_result = |(photo_id, photo_path, scan_result): ScanResult| -> Result<(), failure::Error> {
+        match scan_result {
+            Ok(info) => {
+                if let Some(existing_id) = photo_id {
+                    meta_db.update_photo(existing_id, &photo_path.relative_path, &info)?;
+                } else {
+                    meta_db.insert_photo(&photo_path.relative_path, &info)?;
+                };
+                stats.inc_added()
+            },
+            Err(err) => {
+                error!("Failed to scan {}: {}", photo_path.full_path.to_string_lossy(), err);
+                stats.inc_failed()
+            }
+        }
+        progress_bar.inc(1);
+        Ok(())
+    };
+
+    if num_scan_threads > 0 {
+        // The scanner threads synchronize their input via an atomic index into the files_to_scan vector,
+        // and yield the results back to the main thread via channels.
+        let file_index = Arc::new(AtomicUsize::new(0));
+        let files_to_scan = Arc::new(files_to_scan);
+        let (photo_info_sender, photo_info_receiver) = mpsc::channel::<ScanResult>();
+
+        let scan_threads: Vec<std::thread::JoinHandle<()>> = std::iter::repeat_with(|| {
+            std::thread::spawn(clone!(photo_info_sender, file_index, files_to_scan => move || {
+                loop {
+                    let next = file_index.fetch_add(1, Ordering::SeqCst);
+                    if next >= files_to_scan.len() {
+                        break;
+                    }
+                    let (photo_id, path) = files_to_scan[next].clone();
+                    let info_or_error = PhotoInfo::read_with_default_formats(&path.full_path);
+                    if let Err(_) = photo_info_sender.send((photo_id, path, info_or_error)) {
+                        // scanning was aborted
+                        break;
                     }
                 }
-                Err(err) => {
-                    warn!("Error scanning library: {}", err);
-                    None
-                }
-            });
-
-            for filename in file_entries {
-                if interrupted_scanner.load(Ordering::SeqCst) {
-                    break;
-                }
-                scan_progress_bar.inc_length(1);
-                if let Err(_) = file_sender.send(filename) {
-                    break;
-                }
-            }
+            }))
         })
-    };
+        .take(num_scan_threads)
+        .collect();
 
-    let photos_total = Arc::new(AtomicUsize::new(0));
-    let photos_added = Arc::new(AtomicUsize::new(0));
-    let photos_failed = Arc::new(AtomicUsize::new(0));
+        // Drop our own copy of the sender so that the receiver stops once all threads are done
+        drop(photo_info_sender);
 
-    let inserter_thread = {
-        let root_dir = library.root_dir.clone();
-        let interrupted_inserter = interrupted.clone();
-        let this_photos_total = photos_total.clone();
-        let this_photos_added = photos_added.clone();
-        let this_photos_failed = photos_failed.clone();
-        let this_receiver = file_receiver.clone();
-        let insert_progress_bar = progress_bar.clone();
-        std::thread::spawn(move || {
-            let supported_formats = formats::load_formats();
-            let inserter = MetaInserter::new(
-                &root_dir,
-                &meta_db,
-                supported_formats
-            );
+        // Gather the results from the scan threads and insert them into the DB
+        photo_info_receiver.into_iter()
+            .take_while(|_| context.check_interrupted().is_ok())
+            .map(insert_result)
+            .collect::<Result<(), _>>()?;
 
-            for filename in this_receiver.into_iter() {
-                if interrupted_inserter.load(Ordering::SeqCst) {
-                    break;
-                }
-
-                this_photos_total.fetch_add(1, Ordering::SeqCst);
-
-                match inserter.insert_idempotent(&filename) {
-                    Err(err) => {
-                        this_photos_failed.fetch_add(1, Ordering::SeqCst);
-                        error!("Error for {}: {}", filename.to_string_lossy(), err);
-                    },
-                    Ok(InsertResult::Inserted { .. }) => {
-                        this_photos_added.fetch_add(1, Ordering::SeqCst);
-                    },
-                    Ok(_) => {},
-                }
-                insert_progress_bar.inc(1);
+        // Wait for the threads to finish. Once we reached this point, they should have already stopped scanning.
+        // The first panic from inside the threads is propagated once all threads have stopped.
+        let results: Vec<_> = scan_threads.into_iter().map(|thread| thread.join()).collect();
+        for thread_result in results {
+            if let Err(panic_object) = thread_result {
+                panic!(panic_object)
             }
-        })
-    };
-
-    let scanner_result = scanner_thread.join();
-    let inserter_result = inserter_thread.join();
+        }
+    } else {
+        // Sequential implementation for when parallelism has been disabled
+        files_to_scan.into_iter()
+            .map(|(photo_id, path)| {
+                let scan_result = PhotoInfo::read_with_default_formats(&path.full_path);
+                (photo_id, path, scan_result)
+            })
+            .take_while(|_| context.check_interrupted().is_ok())
+            .map(insert_result)
+            .collect::<Result<(), _>>()?;
+    }
 
     progress_bar.finish_and_clear();
 
-    if scanner_result.err().or(inserter_result.err()).is_some() {
-        error!("Some thread panicked");
-    }
-
     info!(
-        "Scanning done ({} total, {} added, {} failed)",
-        photos_total.load(Ordering::SeqCst),
-        photos_added.load(Ordering::SeqCst),
-        photos_failed.load(Ordering::SeqCst),
+        "Scanning done ({} total, {} added, {} failed, {} skipped)",
+        stats.total(),
+        stats.added(),
+        stats.failed(),
+        stats.skipped(),
     );
 
-    if interrupted.load(Ordering::SeqCst) {
-        Err(std::io::Error::from(std::io::ErrorKind::Interrupted).into())
-    } else {
-        Ok(())
-    }
+    Ok(context.check_interrupted()?)
 }

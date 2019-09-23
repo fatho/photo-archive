@@ -48,6 +48,14 @@ impl MetaDatabase {
         Ok(PhotoId(self.db.connection().last_insert_rowid()))
     }
 
+    pub fn update_photo(&self, id: PhotoId, path_str: &str, info: &PhotoInfo) -> Result<usize> {
+        let created_str = info.created.map(|ts| ts.to_rfc3339()); // ISO formatted date
+        Ok(self.db.connection().execute(
+            "UPDATE photos SET rel_path = ?1, created = ?2, file_hash = ?3 WHERE id = ?4",
+            &[&path_str as &dyn ToSql, &created_str, &info.file_hash, &id.0],
+        )?)
+    }
+
     pub fn get_photo(&self, id: PhotoId) -> Result<Option<Photo>> {
         self.db
             .connection()

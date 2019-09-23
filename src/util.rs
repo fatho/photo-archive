@@ -2,6 +2,27 @@ use log::debug;
 use std::io;
 use std::path::Path;
 
+
+/// Taken from https://gtk-rs.org/tuto/closures for easily cloning everything that is moved into a closure.
+#[macro_export]
+macro_rules! clone {
+    (@param _) => ( _ );
+    (@param $x:ident) => ( $x );
+    ($($n:ident),+ => move || $body:expr) => (
+        {
+            $( let $n = $n.clone(); )+
+            move || $body
+        }
+    );
+    ($($n:ident),+ => move |$($p:tt),+| $body:expr) => (
+        {
+            $( let $n = $n.clone(); )+
+            move |$(clone!(@param $p),)+| $body
+        }
+    );
+}
+
+
 #[derive(Debug, Clone)]
 pub struct Point {
     pub x: f64,

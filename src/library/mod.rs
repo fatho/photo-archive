@@ -98,6 +98,36 @@ impl Library {
     }
 }
 
+/// Path to a photo file, providing fast access to both the relative path
+/// to some root directory and to the absolute path.
+/// Currently only supports paths that can be encoded as UTF-8.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PhotoPath {
+    pub full_path: PathBuf,
+    pub relative_path: String,
+}
+
+impl PhotoPath {
+    pub fn new(root_dir: &Path, absolute_path: &Path) -> io::Result<Self> {
+        let relative_path = absolute_path.strip_prefix(root_dir).map_err(|_| io::Error::from(io::ErrorKind::NotFound))?;
+        let relative_str = match relative_path.to_str() {
+            None =>
+            // TODO: support weird encodings in paths
+            {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "non-UTF-8 representable path not supported",
+                ))
+            }
+            Some(path_str) => Ok(path_str.to_owned()),
+        }?;
+        Ok(Self {
+            full_path: absolute_path.to_path_buf(),
+            relative_path: relative_str,
+        })
+    }
+}
+
 /// Helper for inserting photos in bulk.
 pub struct MetaInserter<'a> {
     root_dir: PathBuf,

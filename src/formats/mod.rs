@@ -2,6 +2,7 @@ use rusqlite::types::{FromSql, ToSql};
 use std::fmt;
 use std::io;
 use std::path::Path;
+use log::warn;
 
 mod jpeg;
 
@@ -82,6 +83,26 @@ pub struct PhotoInfo {
     //pub image_data_hash: Sha256Hash,
 }
 
+impl PhotoInfo {
+    /// Read the photo information from a file,
+    pub fn read_with_default_formats(filename: &Path) -> io::Result<PhotoInfo> {
+        load_default_formats()
+            .into_iter()
+            .filter(|format| format.supported_extension(filename))
+            .find_map(|format| match format.read_info(filename) {
+                Ok(info) => Some(info),
+                Err(err) => {
+                    warn!("{} error: {}", format.name(), err);
+                    None
+                }
+            })
+            .ok_or_else(|| io::Error::new(
+                io::ErrorKind::InvalidData,
+                "File format is not supported",
+            ))
+    }
+}
+
 pub trait ImageFormat {
     fn name(&self) -> &str;
 
@@ -92,6 +113,6 @@ pub trait ImageFormat {
     fn read_info(&self, path: &Path) -> std::io::Result<PhotoInfo>;
 }
 
-pub fn load_formats() -> Vec<Box<dyn ImageFormat>> {
+pub fn load_default_formats() -> Vec<Box<dyn ImageFormat>> {
     vec![Box::new(JpegFormat)]
 }
