@@ -8,6 +8,7 @@ use log::{debug, error, info, warn};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::io;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -58,6 +59,10 @@ enum PhotosCommand {
         /// Also scan files that alrady exist in the database
         #[structopt(short, long)]
         all: bool,
+        /// The paths to scan. Must be contained within the library root path.
+        /// If no paths are specified, the whole library is rescanned.
+        #[structopt(parse(from_os_str))]
+        paths: Vec<PathBuf>,
     },
 }
 
@@ -98,9 +103,9 @@ fn main() {
 }
 
 fn run(opts: GlobalOpts) -> Result<(), failure::Error> {
-    let mut context = AppContext::new(opts);
+    let mut context = AppContext::new();
 
-    let photo_root = context.options.photo_root.clone().unwrap_or_else(|| {
+    let photo_root = opts.photo_root.clone().unwrap_or_else(|| {
         let user_dirs = directories::UserDirs::new().expect("Cannot access user directories");
         let photo_path = user_dirs
             .picture_dir()
@@ -114,19 +119,34 @@ fn run(opts: GlobalOpts) -> Result<(), failure::Error> {
         library_files.root_dir.to_string_lossy()
     );
 
-    match &context.options.command {
+    match &opts.command {
         Command::Init { overwrite } => init(&library_files, *overwrite),
         Command::Status => status(&library_files),
         Command::Photos { command } => match command {
             PhotosCommand::List => photos_list(&library_files),
-            PhotosCommand::Scan { jobs, all } => {
+            PhotosCommand::Scan { jobs, all, paths } => {
                 const MAX_SCAN_THREADS: usize = 10;
                 let num_threads = jobs.unwrap_or(Some(0)).unwrap_or_else(|| num_cpus::get());
                 if num_threads > MAX_SCAN_THREADS {
                     warn!("Cannot use more than {} threads for scanning", MAX_SCAN_THREADS);
                 }
-                let scan_all = *all;
-                photos_scan(&mut context, &library_files, num_threads.min(MAX_SCAN_THREADS), scan_all)
+                let paths_to_scan: Vec<&Path> = if paths.is_empty() {
+                    vec![&library_files.root_dir]
+                } else {
+                    paths.iter().filter_map(|path| {
+                        if path.strip_prefix(&library_files.root_dir).is_ok() {
+                            Some(path.as_ref())
+                        } else {
+                            warn!("Ignoring non-library path {}", path.to_string_lossy());
+                            None
+                        }
+                    })
+                    .collect()
+                };
+                if paths_to_scan.is_empty() {
+                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "No valid paths specified").into());
+                }
+                photos_scan(&mut context, &library_files, num_threads.min(MAX_SCAN_THREADS), *all, &paths_to_scan)
             },
         },
         Command::Thumbnails { command } => Ok(()),
@@ -135,13 +155,12 @@ fn run(opts: GlobalOpts) -> Result<(), failure::Error> {
 
 struct AppContext {
     interrupted: Arc<AtomicBool>,
-    options: GlobalOpts,
 }
 
 impl AppContext {
     /// Create a new application context.
     /// This also installs a Ctrl+C handler.
-    fn new(options: GlobalOpts) -> Self {
+    fn new() -> Self {
         let interrupted = Arc::new(AtomicBool::new(false));
 
         let handler_result = ctrlc::set_handler(clone!(interrupted => move || {
@@ -153,7 +172,7 @@ impl AppContext {
             warn!("Error setting Ctrl+C handler, proceeding anyway: {}", err)
         };
 
-        Self { interrupted, options }
+        Self { interrupted }
     }
 
     /// Check whether the process has received an interruption signal (SIGINT on linux),
@@ -255,8 +274,6 @@ fn photos_list(library: &LibraryFiles) -> Result<(), failure::Error> {
             photo.relative_path,
         );
     }
-    if console::user_attended() {
-    }
 
     Ok(())
 }
@@ -316,7 +333,7 @@ impl ScanStatCollector {
     }
 }
 
-fn photos_scan(context: &mut AppContext, library: &LibraryFiles, num_scan_threads: usize, all: bool) -> Result<(), failure::Error> {
+fn photos_scan(context: &mut AppContext, library: &LibraryFiles, num_scan_threads: usize, all: bool, paths: &[&Path]) -> Result<(), failure::Error> {
     use photo_archive::library::PhotoPath;
     use photo_archive::formats::PhotoInfo;
     use photo_archive::library::meta::PhotoId;
@@ -332,27 +349,14 @@ fn photos_scan(context: &mut AppContext, library: &LibraryFiles, num_scan_thread
     let collect_progress_bar = indicatif::ProgressBar::new_spinner();
     collect_progress_bar.set_message("Collecting files");
 
-    let walker = photo_archive::library::scan_library(&library.root_dir)
-    .filter_map(|result| match result {
-        Ok(entry) => {
-            if entry.file_type().is_dir() {
-                None
-            } else {
-                Some(entry)
-            }
-        }
-        Err(err) => {
-            warn!("Error scanning library: {}", err);
-            None
-        }
-    });
     let mut files_to_scan = Vec::new();
-    for entry in walker {
+    let mut add_file = |filename: PathBuf| -> Result<(), failure::Error> {
         stats.inc_total();
 
         collect_progress_bar.tick();
         context.check_interrupted()?;
-        match PhotoPath::new(&library.root_dir, entry.path()) {
+
+        match PhotoPath::new(&library.root_dir, &filename) {
             Ok(path) => {
                 let existing = meta_db.query_photo_id_by_path(&path.relative_path)?;
                 if all || existing.is_none() {
@@ -363,12 +367,37 @@ fn photos_scan(context: &mut AppContext, library: &LibraryFiles, num_scan_thread
             },
             Err(err) => {
                 stats.inc_failed();
-                warn!("Failed to collect {}: {}", entry.path().to_string_lossy(), err);
+                warn!("Failed to collect {}: {}", filename.to_string_lossy(), err);
             }
+        }
+        Ok(())
+    };
+
+    for scan_path in paths {
+        if scan_path.is_dir() {
+            photo_archive::library::scan_library(scan_path)
+                .filter_map(|result| match result {
+                    Ok(entry) => {
+                        if entry.file_type().is_dir() {
+                            None
+                        } else {
+                            Some(entry.into_path())
+                        }
+                    }
+                    Err(err) => {
+                        warn!("Error scanning library: {}", err);
+                        None
+                    }
+                })
+                .map(&mut add_file)
+                .collect::<Result<(), _>>()?;
+        } else {
+            add_file(scan_path.to_path_buf())?;
         }
     }
 
     collect_progress_bar.finish_and_clear();
+
     info!("Collected {} files ({} skipped, {} failed)", files_to_scan.len(), stats.skipped(), stats.failed());
 
     // STEP 2 - Scan files
