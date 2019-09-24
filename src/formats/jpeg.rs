@@ -24,7 +24,7 @@ impl ImageFormat for JpegFormat {
                 .ok()
         });
 
-        let file_hash = Sha256Hash::from_file(filename)?;
+        let file_hash = Sha256Hash::hash_file(filename)?;
 
         Ok(PhotoInfo { created, file_hash })
     }

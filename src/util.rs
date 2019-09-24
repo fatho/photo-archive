@@ -2,7 +2,6 @@ use log::debug;
 use std::io;
 use std::path::Path;
 
-
 /// Taken from https://gtk-rs.org/tuto/closures for easily cloning everything that is moved into a closure.
 #[macro_export]
 macro_rules! clone {
@@ -21,7 +20,6 @@ macro_rules! clone {
         }
     );
 }
-
 
 #[derive(Debug, Clone)]
 pub struct Point {

@@ -5,13 +5,16 @@ use std::path::{Path, PathBuf};
 pub mod meta;
 pub mod thumb;
 
-use self::meta::PhotoId;
-use crate::formats::{ImageFormat, PhotoInfo};
-
+/// Holds the paths that a photo library consists of.
 #[derive(Debug)]
 pub struct LibraryFiles {
+    /// The directory where all the photos are stored.
+    /// Photos outside of that directory cannot be indexed.
     pub root_dir: PathBuf,
+    /// Path of the Sqlite database containing the photo metadata.
     pub meta_db_file: PathBuf,
+    /// Path of the Sqlite database containing the cached thumbnails.
+    /// This data can always be regenerated and is safe to delete.
     pub thumb_db_file: PathBuf,
 }
 
@@ -108,8 +111,16 @@ pub struct PhotoPath {
 }
 
 impl PhotoPath {
+    /// Create a new photo path.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the absolute photo path is not a subdirectory of the root directory,
+    /// or when the path is not representable as UTF-8.
     pub fn new(root_dir: &Path, absolute_path: &Path) -> io::Result<Self> {
-        let relative_path = absolute_path.strip_prefix(root_dir).map_err(|_| io::Error::from(io::ErrorKind::NotFound))?;
+        let relative_path = absolute_path
+            .strip_prefix(root_dir)
+            .map_err(|_| io::Error::from(io::ErrorKind::NotFound))?;
         let relative_str = match relative_path.to_str() {
             None =>
             // TODO: support weird encodings in paths
@@ -128,86 +139,14 @@ impl PhotoPath {
     }
 }
 
-/// Helper for inserting photos in bulk.
-pub struct MetaInserter<'a> {
-    root_dir: PathBuf,
-    meta_db: &'a meta::MetaDatabase,
-    formats: Vec<Box<dyn ImageFormat>>,
-}
-
-impl<'a> MetaInserter<'a> {
-    pub fn new(
-        root_dir: &Path,
-        meta_db: &'a meta::MetaDatabase,
-        formats: Vec<Box<dyn ImageFormat>>,
-    ) -> Self {
-        Self {
-            root_dir: root_dir.to_path_buf(),
-            meta_db,
-            formats,
-        }
-    }
-
-    pub fn insert_idempotent(&self, filename: &Path) -> Result<InsertResult, failure::Error> {
-        let relative = filename.strip_prefix(&self.root_dir).unwrap();
-        match relative.to_str() {
-            None =>
-            // TODO: support weird encodings in paths
-            {
-                Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "non-UTF-8 representable path not supported",
-                )
-                .into())
-            }
-            Some(path_str) => {
-                let existing = self.meta_db.query_photo_id_by_path(path_str)?;
-                if let Some(photo_id) = existing {
-                    Ok(InsertResult::Exists { id: photo_id })
-                } else {
-                    let info = self
-                        .formats
-                        .iter()
-                        .filter(|format| format.supported_extension(filename))
-                        .find_map(|format| match format.read_info(filename) {
-                            Ok(info) => Some(info),
-                            Err(err) => {
-                                warn!("{} error: {}", format.name(), err);
-                                None
-                            }
-                        });
-
-                    if let Some(info) = info {
-                        let id = self.meta_db.insert_photo(path_str, &info)?;
-                        Ok(InsertResult::Inserted { id, info })
-                    } else {
-                        Err(io::Error::new(
-                            io::ErrorKind::InvalidData,
-                            "File format is not supported",
-                        )
-                        .into())
-                    }
-                }
-            }
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum InsertResult {
-    Inserted { id: PhotoId, info: PhotoInfo },
-    Exists { id: PhotoId },
-}
-
+/// Return an iterator for enumerating all non-hidden files
+/// and directories under the given root path.
 pub fn scan_library(path: &Path) -> impl Iterator<Item = walkdir::Result<walkdir::DirEntry>> {
     let photo_predicate = |entry: &walkdir::DirEntry| {
-        let entry_type = entry.file_type();
         let name = entry.file_name().to_str();
+        // TODO: support windows hidden files
         let is_hidden = name.map_or(false, |s| s.starts_with('.'));
-        let is_photo = name
-            .and_then(|s| s.split('.').next_back())
-            .map_or(false, |s| s == "jpg" || s == "JPG");
-        !is_hidden && (entry_type.is_dir() || is_photo)
+        !is_hidden
     };
 
     walkdir::WalkDir::new(path)

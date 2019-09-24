@@ -1,8 +1,8 @@
+use log::warn;
 use rusqlite::types::{FromSql, ToSql};
 use std::fmt;
 use std::io;
 use std::path::Path;
-use log::warn;
 
 mod jpeg;
 
@@ -11,10 +11,12 @@ pub use jpeg::JpegFormat;
 /// Length of a SHA-256 hash in bytes.
 const SHA256_BYTES: usize = 32;
 
+/// A SHA-256 hash of some data.
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Sha256Hash([u8; SHA256_BYTES]);
 
 impl Sha256Hash {
+    /// Parse a byte slice as SHA-256 hash.
     pub fn from_bytes(hash: &[u8]) -> Option<Sha256Hash> {
         if hash.len() == SHA256_BYTES {
             let mut sha256 = Sha256Hash([0; SHA256_BYTES]);
@@ -25,7 +27,8 @@ impl Sha256Hash {
         }
     }
 
-    pub fn from_file(filename: &Path) -> io::Result<Sha256Hash> {
+    /// Compute the SHA-256 hash of the given file.
+    pub fn hash_file(filename: &Path) -> io::Result<Sha256Hash> {
         use io::Read;
         use sha2::digest::{FixedOutput, Input};
 
@@ -72,6 +75,7 @@ impl FromSql for Sha256Hash {
     }
 }
 
+/// General meta-data associated with a photo file.
 #[derive(Debug)]
 pub struct PhotoInfo {
     /// Creation time of the photo
@@ -96,14 +100,14 @@ impl PhotoInfo {
                     None
                 }
             })
-            .ok_or_else(|| io::Error::new(
-                io::ErrorKind::InvalidData,
-                "File format is not supported",
-            ))
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "File format is not supported")
+            })
     }
 }
 
 pub trait ImageFormat {
+    /// Name of the image format. Used for presenting to the user.
     fn name(&self) -> &str;
 
     /// Return the typical file extensions of the image files supported by this format.

@@ -1,14 +1,13 @@
-use photo_archive::formats;
-use photo_archive::library::{meta, thumb, LibraryFiles, MetaInserter};
 use photo_archive::clone;
+use photo_archive::library::{meta, thumb, LibraryFiles};
 
 use directories;
 use failure::bail;
 use log::{debug, error, info, warn};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use structopt::StructOpt;
 
 #[derive(Debug, StructOpt)]
@@ -40,8 +39,8 @@ enum Command {
     /// Operate on the thumbnail database
     Thumbnails {
         #[structopt(subcommand)]
-        command: ThumbnailsCommand
-    }
+        command: ThumbnailsCommand,
+    },
 }
 
 #[derive(Debug, StructOpt)]
@@ -55,10 +54,11 @@ enum PhotosCommand {
         /// Defaults to the number of CPUs if no number is specified.
         /// If omitted, scanning and inserting into the database happens sequentially.
         #[structopt(short, long)]
+        #[allow(clippy::option_option)] // we need to distinguish ``, `-j` and `-j <num>`
         jobs: Option<Option<usize>>,
         /// Also scan files that alrady exist in the database
         #[structopt(short, long)]
-        all: bool,
+        rescan: bool,
         /// The paths to scan. Must be contained within the library root path.
         /// If no paths are specified, the whole library is rescanned.
         #[structopt(parse(from_os_str))]
@@ -84,13 +84,16 @@ fn main() {
     simplelog::TermLogger::init(
         simplelog::LevelFilter::Info,
         simplelog::Config::default(),
-        simplelog::TerminalMode::Stderr
-    ).unwrap();
+        simplelog::TerminalMode::Stderr,
+    )
+    .unwrap();
 
     let opts = GlobalOpts::from_args();
 
     debug!("Options: {:?}", opts);
 
+    // Defer the actual work to `run` so that all destructors of relevant objects
+    // such as the sqlite connection can still run before exiting the process.
     match run(opts) {
         Err(err) => {
             error!("Exiting due to error: {}", err);
@@ -102,6 +105,9 @@ fn main() {
     }
 }
 
+/// Dispatch work to other functions based on the program options that were given.
+/// In case of a failure, it returns an error.
+/// Exit is not called and a Ctrl+C handler is installed.
 fn run(opts: GlobalOpts) -> Result<(), failure::Error> {
     let mut context = AppContext::new();
 
@@ -124,36 +130,47 @@ fn run(opts: GlobalOpts) -> Result<(), failure::Error> {
         Command::Status => status(&library_files),
         Command::Photos { command } => match command {
             PhotosCommand::List => photos_list(&library_files),
-            PhotosCommand::Scan { jobs, all, paths } => {
-                const MAX_SCAN_THREADS: usize = 10;
-                let num_threads = jobs.unwrap_or(Some(0)).unwrap_or_else(|| num_cpus::get());
-                if num_threads > MAX_SCAN_THREADS {
-                    warn!("Cannot use more than {} threads for scanning", MAX_SCAN_THREADS);
-                }
+            PhotosCommand::Scan { jobs, rescan, paths } => {
+                let num_threads = jobs.map(|count| count.unwrap_or_else(num_cpus::get).min(1024));
                 let paths_to_scan: Vec<&Path> = if paths.is_empty() {
                     vec![&library_files.root_dir]
                 } else {
-                    paths.iter().filter_map(|path| {
-                        if path.strip_prefix(&library_files.root_dir).is_ok() {
-                            Some(path.as_ref())
-                        } else {
-                            warn!("Ignoring non-library path {}", path.to_string_lossy());
-                            None
-                        }
-                    })
-                    .collect()
+                    paths
+                        .iter()
+                        .filter_map(|path| {
+                            if path.strip_prefix(&library_files.root_dir).is_ok() {
+                                Some(path.as_ref())
+                            } else {
+                                warn!("Ignoring non-library path {}", path.to_string_lossy());
+                                None
+                            }
+                        })
+                        .collect()
                 };
                 if paths_to_scan.is_empty() {
-                    return Err(io::Error::new(io::ErrorKind::InvalidInput, "No valid paths specified").into());
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidInput,
+                        "No valid paths specified",
+                    )
+                    .into());
                 }
-                photos_scan(&mut context, &library_files, num_threads.min(MAX_SCAN_THREADS), *all, &paths_to_scan)
-            },
+                photos_scan(
+                    &mut context,
+                    &library_files,
+                    num_threads,
+                    *rescan,
+                    &paths_to_scan,
+                )
+            }
         },
-        Command::Thumbnails { command } => Ok(()),
+        Command::Thumbnails { .. } => Ok(()),
     }
 }
 
+/// Contains things that are relevant curing the whole execution of the app.
 struct AppContext {
+    /// A flag that indicates whether the process was interrupted (via SIGINT/Ctrl+C)
+    /// and should terminate as fast as possible.
     interrupted: Arc<AtomicBool>,
 }
 
@@ -186,6 +203,8 @@ impl AppContext {
     }
 }
 
+/// Generate the database files.
+/// If overwrite is true, the old database files are renamed and a new database is created.
 fn init(files: &LibraryFiles, overwrite: bool) -> Result<(), failure::Error> {
     if !files.root_exists() {
         bail!(
@@ -218,6 +237,7 @@ fn init(files: &LibraryFiles, overwrite: bool) -> Result<(), failure::Error> {
     Ok(())
 }
 
+/// Display some general information about the photo database.
 fn status(library_files: &LibraryFiles) -> Result<(), failure::Error> {
     let print_status = |name: &'static str, path: &Path, found: bool| {
         println!(
@@ -256,6 +276,7 @@ fn status(library_files: &LibraryFiles) -> Result<(), failure::Error> {
     Ok(())
 }
 
+/// List all the photos in the database/
 fn photos_list(library: &LibraryFiles) -> Result<(), failure::Error> {
     use std::borrow::Cow;
 
@@ -269,7 +290,10 @@ fn photos_list(library: &LibraryFiles) -> Result<(), failure::Error> {
         println!(
             "{}\t{}\t{:.8}..\t{}",
             photo.id.0,
-            photo.info.created.map_or(Cow::Borrowed("-"), |ts| Cow::Owned(ts.to_rfc3339())),
+            photo
+                .info
+                .created
+                .map_or(Cow::Borrowed("-"), |ts| Cow::Owned(ts.to_rfc3339())),
             photo.info.file_hash,
             photo.relative_path,
         );
@@ -278,6 +302,7 @@ fn photos_list(library: &LibraryFiles) -> Result<(), failure::Error> {
     Ok(())
 }
 
+/// Keep track of some statistics while scanning the photo library.
 #[derive(Clone)]
 struct ScanStatCollector {
     /// The total number of photo files that were seen during collection
@@ -290,6 +315,7 @@ struct ScanStatCollector {
     failed: usize,
 }
 
+#[rustfmt::skip]
 impl ScanStatCollector {
     pub fn new() -> Self {
         Self {
@@ -300,46 +326,35 @@ impl ScanStatCollector {
         }
     }
 
-    pub fn inc_total(&mut self) {
-        self.total += 1;
-    }
+    pub fn inc_total(&mut self) { self.total += 1; }
+    pub fn inc_skipped(&mut self) { self.skipped += 1; }
+    pub fn inc_added(&mut self) { self.added += 1; }
+    pub fn inc_failed(&mut self) { self.failed += 1; }
 
-    pub fn inc_skipped(&mut self) {
-        self.skipped += 1;
-    }
-
-    pub fn inc_added(&mut self) {
-        self.added += 1;
-    }
-
-    pub fn inc_failed(&mut self) {
-        self.failed += 1;
-    }
-
-    pub fn total(&self) -> usize {
-        self.total
-    }
-
-    pub fn skipped(&self) -> usize {
-        self.skipped
-    }
-
-    pub fn added(&self) -> usize {
-        self.added
-    }
-
-    pub fn failed(&self) -> usize {
-        self.failed
-    }
+    pub fn total(&self) -> usize { self.total }
+    pub fn skipped(&self) -> usize { self.skipped }
+    pub fn added(&self) -> usize { self.added }
+    pub fn failed(&self) -> usize { self.failed }
 }
 
-fn photos_scan(context: &mut AppContext, library: &LibraryFiles, num_scan_threads: usize, all: bool, paths: &[&Path]) -> Result<(), failure::Error> {
-    use photo_archive::library::PhotoPath;
+/// Scan the photo library or subtrees of it for new and updated photos, optionally in parallel.
+fn photos_scan(
+    context: &mut AppContext,
+    library: &LibraryFiles,
+    parallel_scan_threads: Option<usize>,
+    rescan: bool,
+    paths: &[&Path],
+) -> Result<(), failure::Error> {
     use photo_archive::formats::PhotoInfo;
     use photo_archive::library::meta::PhotoId;
+    use photo_archive::library::PhotoPath;
     use std::sync::mpsc;
 
-    type ScanResult = (Option<PhotoId>, PhotoPath, Result<PhotoInfo, std::io::Error>);
+    type ScanResult = (
+        Option<PhotoId>,
+        PhotoPath,
+        Result<PhotoInfo, std::io::Error>,
+    );
 
     let meta_db = meta::MetaDatabase::open_or_create(&library.meta_db_file)?;
     let mut stats = ScanStatCollector::new();
@@ -359,12 +374,12 @@ fn photos_scan(context: &mut AppContext, library: &LibraryFiles, num_scan_thread
         match PhotoPath::new(&library.root_dir, &filename) {
             Ok(path) => {
                 let existing = meta_db.query_photo_id_by_path(&path.relative_path)?;
-                if all || existing.is_none() {
+                if rescan || existing.is_none() {
                     files_to_scan.push((existing, path));
                 } else {
                     stats.inc_skipped();
                 }
-            },
+            }
             Err(err) => {
                 stats.inc_failed();
                 warn!("Failed to collect {}: {}", filename.to_string_lossy(), err);
@@ -398,37 +413,48 @@ fn photos_scan(context: &mut AppContext, library: &LibraryFiles, num_scan_thread
 
     collect_progress_bar.finish_and_clear();
 
-    info!("Collected {} files ({} skipped, {} failed)", files_to_scan.len(), stats.skipped(), stats.failed());
+    info!(
+        "Collected {} files ({} skipped, {} failed)",
+        files_to_scan.len(),
+        stats.skipped(),
+        stats.failed()
+    );
 
     // STEP 2 - Scan files
 
-    let progress_bar = indicatif::ProgressBar::new(0)
-        .with_style(indicatif::ProgressStyle::default_bar()
+    let progress_bar = indicatif::ProgressBar::new(0).with_style(
+        indicatif::ProgressStyle::default_bar()
             .progress_chars("=> ")
-            .template("{msg} [{wide_bar}] {pos}/{len} ({eta})"));
+            .template("{msg} [{wide_bar}] {pos}/{len} ({eta})"),
+    );
     progress_bar.set_length(files_to_scan.len() as u64);
     progress_bar.set_message("Scanning");
 
-    let insert_result = |(photo_id, photo_path, scan_result): ScanResult| -> Result<(), failure::Error> {
-        match scan_result {
-            Ok(info) => {
-                if let Some(existing_id) = photo_id {
-                    meta_db.update_photo(existing_id, &photo_path.relative_path, &info)?;
-                } else {
-                    meta_db.insert_photo(&photo_path.relative_path, &info)?;
-                };
-                stats.inc_added()
-            },
-            Err(err) => {
-                error!("Failed to scan {}: {}", photo_path.full_path.to_string_lossy(), err);
-                stats.inc_failed()
+    let insert_result =
+        |(photo_id, photo_path, scan_result): ScanResult| -> Result<(), failure::Error> {
+            match scan_result {
+                Ok(info) => {
+                    if let Some(existing_id) = photo_id {
+                        meta_db.update_photo(existing_id, &photo_path.relative_path, &info)?;
+                    } else {
+                        meta_db.insert_photo(&photo_path.relative_path, &info)?;
+                    };
+                    stats.inc_added()
+                }
+                Err(err) => {
+                    error!(
+                        "Failed to scan {}: {}",
+                        photo_path.full_path.to_string_lossy(),
+                        err
+                    );
+                    stats.inc_failed()
+                }
             }
-        }
-        progress_bar.inc(1);
-        Ok(())
-    };
+            progress_bar.inc(1);
+            Ok(())
+        };
 
-    if num_scan_threads > 0 {
+    if let Some(thread_count) = parallel_scan_threads {
         // The scanner threads synchronize their input via an atomic index into the files_to_scan vector,
         // and yield the results back to the main thread via channels.
         let file_index = Arc::new(AtomicUsize::new(0));
@@ -436,36 +462,42 @@ fn photos_scan(context: &mut AppContext, library: &LibraryFiles, num_scan_thread
         let (photo_info_sender, photo_info_receiver) = mpsc::channel::<ScanResult>();
 
         let scan_threads: Vec<std::thread::JoinHandle<()>> = std::iter::repeat_with(|| {
-            std::thread::spawn(clone!(photo_info_sender, file_index, files_to_scan => move || {
-                loop {
-                    let next = file_index.fetch_add(1, Ordering::SeqCst);
-                    if next >= files_to_scan.len() {
-                        break;
+            std::thread::spawn(
+                clone!(photo_info_sender, file_index, files_to_scan => move || {
+                    loop {
+                        let next = file_index.fetch_add(1, Ordering::SeqCst);
+                        if next >= files_to_scan.len() {
+                            break;
+                        }
+                        let (photo_id, path) = files_to_scan[next].clone();
+                        let info_or_error = PhotoInfo::read_with_default_formats(&path.full_path);
+                        if photo_info_sender.send((photo_id, path, info_or_error)).is_err() {
+                            // Scanning was aborted (the receiver is gone)
+                            break;
+                        }
                     }
-                    let (photo_id, path) = files_to_scan[next].clone();
-                    let info_or_error = PhotoInfo::read_with_default_formats(&path.full_path);
-                    if let Err(_) = photo_info_sender.send((photo_id, path, info_or_error)) {
-                        // scanning was aborted
-                        break;
-                    }
-                }
-            }))
+                }),
+            )
         })
-        .take(num_scan_threads)
+        .take(thread_count.max(1)) // use at least 1 thread
         .collect();
 
         // Drop our own copy of the sender so that the receiver stops once all threads are done
         drop(photo_info_sender);
 
         // Gather the results from the scan threads and insert them into the DB
-        photo_info_receiver.into_iter()
+        photo_info_receiver
+            .into_iter()
             .take_while(|_| context.check_interrupted().is_ok())
             .map(insert_result)
             .collect::<Result<(), _>>()?;
 
         // Wait for the threads to finish. Once we reached this point, they should have already stopped scanning.
         // The first panic from inside the threads is propagated once all threads have stopped.
-        let results: Vec<_> = scan_threads.into_iter().map(|thread| thread.join()).collect();
+        let results: Vec<_> = scan_threads
+            .into_iter()
+            .map(|thread| thread.join())
+            .collect();
         for thread_result in results {
             if let Err(panic_object) = thread_result {
                 panic!(panic_object)
@@ -473,7 +505,8 @@ fn photos_scan(context: &mut AppContext, library: &LibraryFiles, num_scan_thread
         }
     } else {
         // Sequential implementation for when parallelism has been disabled
-        files_to_scan.into_iter()
+        files_to_scan
+            .into_iter()
             .map(|(photo_id, path)| {
                 let scan_result = PhotoInfo::read_with_default_formats(&path.full_path);
                 (photo_id, path, scan_result)
