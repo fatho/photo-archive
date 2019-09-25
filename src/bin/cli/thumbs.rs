@@ -1,13 +1,16 @@
 //! CLI implementation for the thumbs subcommand.
 
+use crate::cli;
 use photo_archive::library::{meta, thumb, LibraryFiles};
 use std::path::Path;
-use crate::cli;
-
 
 /// Generate thumbnail image for all the photos currently stored in the photo database.
-pub fn generate(context: &mut cli::AppContext, library: &LibraryFiles) -> Result<(), failure::Error> {
-
+pub fn generate(
+    context: &mut cli::AppContext,
+    library: &LibraryFiles,
+    regenerate: bool,
+    retry_failed: bool,
+) -> Result<(), failure::Error> {
     let meta_db = meta::MetaDatabase::open_or_create(&library.meta_db_file)?;
     let thumb_db = thumb::ThumbDatabase::open_or_create(&library.thumb_db_file)?;
 
@@ -26,7 +29,10 @@ pub fn generate(context: &mut cli::AppContext, library: &LibraryFiles) -> Result
             break;
         }
         let state = thumb_db.query_thumbnail_state(photo.id)?;
-        if state == thumb::ThumbnailState::Absent {
+        if state == thumb::ThumbnailState::Absent
+            || (state == thumb::ThumbnailState::Present && regenerate)
+            || (state == thumb::ThumbnailState::Error && retry_failed)
+        {
             photo_queue.push(photo);
         }
         // TODO: add option for regenerating existing and ignoring previously failed ones
@@ -49,7 +55,8 @@ pub fn generate(context: &mut cli::AppContext, library: &LibraryFiles) -> Result
 
         let full_path = library.root_dir.join(Path::new(&photo.relative_path));
         // TODO: add option for thumbnail size
-        let thumbnail_result = thumb::Thumbnail::generate(&full_path, 400).map_err(|e| format!("{}", e));
+        let thumbnail_result =
+            thumb::Thumbnail::generate(&full_path, 400).map_err(|e| format!("{}", e));
         thumb_db.insert_thumbnail(photo.id, thumbnail_result.as_ref().map_err(|e| e.as_ref()))?;
     }
 

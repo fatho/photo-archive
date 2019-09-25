@@ -3,11 +3,11 @@ use photo_archive::clone;
 use photo_archive::library::{meta, thumb, LibraryFiles};
 
 use failure::bail;
+use lazy_static::lazy_static;
 use log::{info, warn};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use lazy_static::lazy_static;
 
 pub mod photos;
 pub mod thumbs;

@@ -11,10 +11,7 @@ use std::sync::Arc;
 use crate::cli;
 
 /// List all the photos in the database/
-pub fn list(
-    context: &mut cli::AppContext,
-    library: &LibraryFiles,
-) -> Result<(), failure::Error> {
+pub fn list(context: &mut cli::AppContext, library: &LibraryFiles) -> Result<(), failure::Error> {
     use std::borrow::Cow;
 
     let meta_db = meta::MetaDatabase::open_or_create(&library.meta_db_file)?;

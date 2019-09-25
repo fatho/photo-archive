@@ -73,6 +73,9 @@ enum ThumbnailsCommand {
         #[structopt(short, long)]
         /// Generate thumbnails also for images that already have one.
         regenerate: bool,
+        #[structopt(short = "f", long)]
+        /// Generate thumbnails also for images where thumbnail generation previously failed.
+        retry_failed: bool,
     },
     /// Remove cached thumbnails that are no longer referenced from a photo
     Gc,
@@ -166,7 +169,10 @@ fn run(opts: GlobalOpts) -> Result<(), failure::Error> {
             }
         },
         Command::Thumbnails { command } => match command {
-            ThumbnailsCommand::Generate { regenerate } => cli::thumbs::generate(&mut context, &library_files),
+            ThumbnailsCommand::Generate {
+                regenerate,
+                retry_failed,
+            } => cli::thumbs::generate(&mut context, &library_files, *regenerate, *retry_failed),
             ThumbnailsCommand::Gc => Ok(()),
             ThumbnailsCommand::Clear => Ok(()),
         },
