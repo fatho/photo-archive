@@ -66,8 +66,8 @@ enum PhotosCommand {
 
 #[derive(Debug, StructOpt)]
 enum ThumbnailsCommand {
-    /// Remove all cached thumbnail images
-    Clear,
+    /// Remove all cached thumbnail images, cannot be undone.
+    Delete,
     /// Generate thumbnails for images in the photo database
     Generate {
         #[structopt(short, long)]
@@ -174,7 +174,7 @@ fn run(opts: GlobalOpts) -> Result<(), failure::Error> {
                 retry_failed,
             } => cli::thumbs::generate(&mut context, &library_files, *regenerate, *retry_failed),
             ThumbnailsCommand::Gc => Ok(()),
-            ThumbnailsCommand::Clear => Ok(()),
+            ThumbnailsCommand::Delete => cli::thumbs::delete(&mut context, &library_files),
         },
     }
 }

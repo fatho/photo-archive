@@ -3,6 +3,21 @@
 use crate::cli;
 use photo_archive::library::{meta, thumb, LibraryFiles};
 use std::path::Path;
+use log::info;
+
+/// Remove all thumbnails
+pub fn delete(
+    context: &mut cli::AppContext,
+    library: &LibraryFiles
+) -> Result<(), failure::Error> {
+    let thumb_db = thumb::ThumbDatabase::open_or_create(&library.thumb_db_file)?;
+    context.check_interrupted()?;
+
+    info!("Deleting all thumbnails");
+    thumb_db.delete_all_thumbnails()?;
+    info!("Thumbnails deleted");
+    Ok(())
+}
 
 /// Generate thumbnail image for all the photos currently stored in the photo database.
 pub fn generate(
@@ -15,6 +30,8 @@ pub fn generate(
     let thumb_db = thumb::ThumbDatabase::open_or_create(&library.thumb_db_file)?;
 
     let all_photos = meta_db.query_all_photo_ids()?;
+
+    info!("Collecting photos to process");
 
     let collect_progress_bar = indicatif::ProgressBar::new(all_photos.len() as u64)
         .with_style(cli::PROGRESS_STYLE.clone());
@@ -35,11 +52,12 @@ pub fn generate(
         {
             photo_queue.push(photo);
         }
-        // TODO: add option for regenerating existing and ignoring previously failed ones
     }
 
     collect_progress_bar.finish_and_clear();
     context.check_interrupted()?;
+
+    info!("Generating thumbnail images for {} photos", photo_queue.len());
 
     let generate_progress_bar = indicatif::ProgressBar::new(photo_queue.len() as u64)
         .with_style(cli::PROGRESS_STYLE.clone());
@@ -62,6 +80,8 @@ pub fn generate(
 
     generate_progress_bar.finish_and_clear();
     context.check_interrupted()?;
+
+    info!("Thumbnail image generation done");
 
     Ok(())
 }

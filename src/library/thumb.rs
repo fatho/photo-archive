@@ -119,6 +119,14 @@ impl ThumbDatabase {
             .optional()
             .map_err(Into::into)
     }
+
+    /// Delete all cached thumbnails. Cannot be undone.
+    pub fn delete_all_thumbnails(&self) -> database::Result<()> {
+        self.db.connection().execute("DELETE FROM thumbnails", NO_PARAMS)?;
+        // We need to vacuum in order to reclaim the freed space
+        self.db.connection().execute("VACUUM", NO_PARAMS)?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, FromPrimitive, ToPrimitive)]
