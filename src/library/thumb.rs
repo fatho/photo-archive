@@ -69,25 +69,8 @@ impl ThumbDatabase {
         Ok(Self { db })
     }
 
-    pub fn get_thumbnail_state(&self, photo_id: PhotoId) -> database::Result<ThumbnailState> {
-        let code = self
-            .db
-            .connection()
-            .query_row(
-                "SELECT (CASE WHEN thumbnail IS NOT NULL THEN 1 ELSE 0 END) +
-                   (CASE WHEN error IS NOT NULL THEN 2 ELSE 0 END)
-             FROM thumbnails WHERE id = ?1",
-                &[photo_id.0],
-                |row| row.get::<_, u32>(0),
-            )
-            .optional()?;
-        Ok(match code {
-            None => ThumbnailState::Absent,
-            Some(1) => ThumbnailState::Present,
-            _ => ThumbnailState::Error,
-        })
-    }
-
+    /// Insert or update the thumbnail for a given photo.
+    /// If generating the thumbnail caused an error, store the error message instead
     pub fn insert_thumbnail(
         &self,
         photo_id: PhotoId,
@@ -103,7 +86,29 @@ impl ThumbDatabase {
         Ok(())
     }
 
-    pub fn get_thumbnail(&self, photo: PhotoId) -> database::Result<Option<Thumbnail>> {
+    /// Check whether there is a thumbnail for the given photo in the database.
+    pub fn query_thumbnail_state(&self, photo_id: PhotoId) -> database::Result<ThumbnailState> {
+        let code = self
+            .db
+            .connection()
+            .query_row(
+                "SELECT thumbnail IS NOT NULL FROM thumbnails WHERE id = ?1",
+                &[photo_id.0],
+                |row| row.get::<_, bool>(0),
+            )
+            .optional()?;
+        Ok(match code {
+            None => ThumbnailState::Absent,
+            Some(true) => ThumbnailState::Present,
+            // since we can have either the thumbnail or the error,
+            // we know an error must be present if there was no thumbnail
+            Some(false) => ThumbnailState::Error,
+        })
+    }
+
+    /// Retrieve the thumbnail for a given photo if it exists.
+    pub fn query_thumbnail(&self, photo: PhotoId) -> database::Result<Option<Thumbnail>> {
+        // TODO: return either thumbnail or the stored error
         self.db
             .connection()
             .query_row(
@@ -145,7 +150,8 @@ impl Schema for ThumbDbSchema {
                     "CREATE TABLE thumbnails(
                     id               INTEGER PRIMARY KEY,
                     thumbnail        BLOB,
-                    error            TEXT
+                    error            TEXT,
+                    CONSTRAINT thumbnails_present_xor_error CHECK ((thumbnail IS NOT NULL) = (error IS NULL))
                     )",
                     NO_PARAMS,
                 )?;

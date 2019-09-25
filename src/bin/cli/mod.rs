@@ -7,9 +7,17 @@ use log::{info, warn};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use lazy_static::lazy_static;
 
 pub mod photos;
 pub mod thumbs;
+
+lazy_static! {
+    pub static ref PROGRESS_STYLE: indicatif::ProgressStyle =
+        indicatif::ProgressStyle::default_bar()
+            .progress_chars("=> ")
+            .template("{msg} [{wide_bar}] {pos}/{len} ({eta})");
+}
 
 /// Contains things that are relevant curing the whole execution of the app.
 pub struct AppContext {
