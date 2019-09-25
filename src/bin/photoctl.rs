@@ -27,7 +27,7 @@ enum Command {
         /// Re-initialize an existing library.
         overwrite: bool,
     },
-    /// Display statistics and meta information about the photo library.
+    /// Display statistics and photodb information about the photo library.
     Status,
     /// Operate on the photo database
     Photos {

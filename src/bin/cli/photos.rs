@@ -1,9 +1,9 @@
 //! CLI functions specific to the `photos` subcommand.
 
 use photo_archive::clone;
-use photo_archive::library::{meta, LibraryFiles};
+use photo_archive::library::{photodb, LibraryFiles};
 
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -14,7 +14,7 @@ use crate::cli;
 pub fn list(context: &mut cli::AppContext, library: &LibraryFiles) -> Result<(), failure::Error> {
     use std::borrow::Cow;
 
-    let meta_db = meta::MetaDatabase::open_or_create(&library.meta_db_file)?;
+    let meta_db = photodb::PhotoDatabase::open_or_create(&library.photo_db_file)?;
 
     let photos = meta_db.query_all_photos()?;
 
@@ -81,17 +81,20 @@ pub fn scan(
     paths: &[&Path],
 ) -> Result<(), failure::Error> {
     use photo_archive::formats::PhotoInfo;
-    use photo_archive::library::meta::PhotoId;
+    use photo_archive::library::photodb::PhotoId;
     use photo_archive::library::PhotoPath;
     use std::sync::mpsc;
 
+    /// When scanning a photo, we get back the id if it already exists in the database,
+    /// the path where the file resides, and the photo info, if we managed to parse the file
+    /// and the format is supported.
     type ScanResult = (
         Option<PhotoId>,
         PhotoPath,
-        Result<PhotoInfo, std::io::Error>,
+        Result<Option<PhotoInfo>, std::io::Error>,
     );
 
-    let meta_db = meta::MetaDatabase::open_or_create(&library.meta_db_file)?;
+    let meta_db = photodb::PhotoDatabase::open_or_create(&library.photo_db_file)?;
     let mut stats = ScanStatCollector::new();
 
     // STEP 1 - Collect files
@@ -106,7 +109,7 @@ pub fn scan(
         collect_progress_bar.tick();
         context.check_interrupted()?;
 
-        match PhotoPath::new(&library.root_dir, &filename) {
+        match PhotoPath::from_absolute(&library.root_dir, &filename) {
             Ok(path) => {
                 let existing = meta_db.query_photo_id_by_path(&path.relative_path)?;
                 if rescan || existing.is_none() {
@@ -168,7 +171,7 @@ pub fn scan(
     let insert_result =
         |(photo_id, photo_path, scan_result): ScanResult| -> Result<(), failure::Error> {
             match scan_result {
-                Ok(info) => {
+                Ok(Some(info)) => {
                     if let Some(existing_id) = photo_id {
                         meta_db.update_photo(existing_id, &photo_path.relative_path, &info)?;
                     } else {
@@ -176,12 +179,26 @@ pub fn scan(
                     };
                     stats.inc_added()
                 }
+                Ok(None) => {
+                    // Prevent progress bar from flickering when nothing is actually logged
+                    if log::max_level() >= log::LevelFilter::Debug {
+                        super::suspend_progress(&progress_bar, || {
+                            debug!(
+                                "Could not scan {}: file format not supported",
+                                photo_path.full_path.to_string_lossy(),
+                            );
+                        });
+                    }
+                    stats.inc_skipped()
+                }
                 Err(err) => {
-                    error!(
-                        "Failed to scan {}: {}",
-                        photo_path.full_path.to_string_lossy(),
-                        err
-                    );
+                    super::suspend_progress(&progress_bar, || {
+                        error!(
+                            "Failed to scan {}: {}",
+                            photo_path.full_path.to_string_lossy(),
+                            err
+                        );
+                    });
                     stats.inc_failed()
                 }
             }

@@ -3,12 +3,13 @@
 use failure::Fail;
 use log::{debug, info};
 use rusqlite::{Connection, OptionalExtension, Transaction, NO_PARAMS};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct Database<S> {
     conn: Connection,
     schema: S,
+    filename: PathBuf,
 }
 
 #[derive(Debug, Fail)]
@@ -45,13 +46,20 @@ where
     S: Schema,
 {
     pub fn open_or_create<P: AsRef<Path>>(path: P) -> Result<Self> {
+        debug!("Opening database {}", path.as_ref().to_string_lossy());
+
+        let filename = path.as_ref().to_path_buf();
         let mut conn = Connection::open(path)?;
+
+        // set some sensible defaults
+        conn.execute("PRAGMA foreign_keys = ON", NO_PARAMS)?;
+
         let current_version = Self::init_for_migrations(&mut conn)?;
         let schema = S::from_version(current_version).ok_or(Error::UnknownSchemaVersion {
             version: current_version,
         })?;
 
-        Ok(Self { conn, schema })
+        Ok(Self { conn, schema, filename })
     }
 
     pub fn connection(&self) -> &Connection {
@@ -108,7 +116,7 @@ where
     }
 
     fn run_migration(&mut self, target: Version) -> Result<()> {
-        info!("Migrating to version {}", target.0);
+        info!("{}: Migrating to version {}", self.filename.to_string_lossy(), target.0);
 
         let new_schema =
             S::from_version(target).ok_or(Error::UnknownSchemaVersion { version: target })?;

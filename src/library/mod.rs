@@ -1,9 +1,7 @@
-use log::warn;
 use std::io;
 use std::path::{Path, PathBuf};
 
-pub mod meta;
-pub mod thumb;
+pub mod photodb;
 
 /// Holds the paths that a photo library consists of.
 #[derive(Debug)]
@@ -11,25 +9,18 @@ pub struct LibraryFiles {
     /// The directory where all the photos are stored.
     /// Photos outside of that directory cannot be indexed.
     pub root_dir: PathBuf,
-    /// Path of the Sqlite database containing the photo metadata.
-    pub meta_db_file: PathBuf,
-    /// Path of the Sqlite database containing the cached thumbnails.
-    /// This data can always be regenerated and is safe to delete.
-    pub thumb_db_file: PathBuf,
+    /// Path of the Sqlite database containing the photo metadata and cached thumbnails.
+    pub photo_db_file: PathBuf,
 }
 
 impl LibraryFiles {
     pub fn new(root_path: &Path) -> LibraryFiles {
         let root_dir = root_path.to_owned();
-        let mut meta_db_file = root_dir.clone();
-        meta_db_file.push("photos.db");
-        let mut thumb_db_file = root_dir.clone();
-        thumb_db_file.push("thumbs.db");
+        let photo_db_file = root_dir.join("photos.db");
 
         LibraryFiles {
             root_dir,
-            meta_db_file,
-            thumb_db_file,
+            photo_db_file,
         }
     }
 
@@ -37,67 +28,16 @@ impl LibraryFiles {
         self.root_dir.is_dir()
     }
 
-    pub fn meta_db_exists(&self) -> bool {
-        self.meta_db_file.is_file()
-    }
-
-    pub fn thumb_db_exists(&self) -> bool {
-        self.thumb_db_file.is_file()
-    }
-}
-
-#[derive(Debug)]
-pub struct Library {
-    root_dir: PathBuf,
-    meta_db: meta::MetaDatabase,
-    thumb_db: thumb::ThumbDatabase,
-}
-
-impl Library {
-    fn generate_thumbnail_impl(
-        &self,
-        photo_path: &Path,
-        photo_id: meta::PhotoId,
-    ) -> Result<(), failure::Error> {
-        match thumb::Thumbnail::generate(photo_path, 400) {
-            Ok(thumb) => self.thumb_db.insert_thumbnail(photo_id, Ok(&thumb)),
-            Err(err) => {
-                let err_msg = format!("{}", err);
-                self.thumb_db
-                    .insert_thumbnail(photo_id, Err(err_msg.as_ref()))
-            }
-        }
-        .map_err(Into::into)
-    }
-
-    pub fn generate_thumbnail(&self, photo_id: meta::PhotoId) -> Result<(), failure::Error> {
-        if let Some(photo) = self.meta_db.get_photo(photo_id)? {
-            let photo_path = self.get_full_path(&photo);
-            self.generate_thumbnail_impl(photo_path.as_ref(), photo_id)
-        } else {
-            warn!("Requested thumbnail for non-existing photo {:?}", photo_id);
-            Ok(())
-        }
+    pub fn photo_db_exists(&self) -> bool {
+        self.photo_db_file.is_file()
     }
 
     /// Retrieve the full path of a photo stored in the database.
-    pub fn get_full_path(&self, photo: &meta::Photo) -> PathBuf {
+    pub fn get_full_path(&self, photo: &photodb::Photo) -> PathBuf {
         let mut full_path = self.root_dir.clone();
         let rel_path = Path::new(&photo.relative_path);
         full_path.push(rel_path);
         full_path
-    }
-
-    /// Gain access to the underlying photo database.
-    #[inline(always)]
-    pub fn thumb_db(&self) -> &thumb::ThumbDatabase {
-        &self.thumb_db
-    }
-
-    /// Gain access to the underlying photo database.
-    #[inline(always)]
-    pub fn meta_db(&self) -> &meta::MetaDatabase {
-        &self.meta_db
     }
 }
 
@@ -117,7 +57,7 @@ impl PhotoPath {
     ///
     /// Returns an error when the absolute photo path is not a subdirectory of the root directory,
     /// or when the path is not representable as UTF-8.
-    pub fn new(root_dir: &Path, absolute_path: &Path) -> io::Result<Self> {
+    pub fn from_absolute(root_dir: &Path, absolute_path: &Path) -> io::Result<Self> {
         let relative_path = absolute_path
             .strip_prefix(root_dir)
             .map_err(|_| io::Error::from(io::ErrorKind::NotFound))?;
@@ -136,6 +76,14 @@ impl PhotoPath {
             full_path: absolute_path.to_path_buf(),
             relative_path: relative_str,
         })
+    }
+
+    /// Retrieve the full path of a photo stored in the database.
+    pub fn from_relative(root_dir: &Path, relative_path: &str) -> Self {
+        let full_path = root_dir.join(Path::new(relative_path));
+        Self {
+            full_path, relative_path: relative_path.to_owned()
+        }
     }
 }
 

@@ -1,4 +1,3 @@
-use log::warn;
 use rusqlite::types::{FromSql, ToSql};
 use std::fmt;
 use std::io;
@@ -89,20 +88,12 @@ pub struct PhotoInfo {
 
 impl PhotoInfo {
     /// Read the photo information from a file,
-    pub fn read_with_default_formats(filename: &Path) -> io::Result<PhotoInfo> {
+    pub fn read_with_default_formats(filename: &Path) -> io::Result<Option<PhotoInfo>> {
         load_default_formats()
             .into_iter()
-            .filter(|format| format.supported_extension(filename))
-            .find_map(|format| match format.read_info(filename) {
-                Ok(info) => Some(info),
-                Err(err) => {
-                    warn!("{} error: {}", format.name(), err);
-                    None
-                }
-            })
-            .ok_or_else(|| {
-                io::Error::new(io::ErrorKind::InvalidData, "File format is not supported")
-            })
+            .find(|format| format.supported_extension(filename))
+            .map(|format| format.read_info(filename))
+            .transpose()
     }
 }
 
@@ -119,4 +110,54 @@ pub trait ImageFormat {
 
 pub fn load_default_formats() -> Vec<Box<dyn ImageFormat>> {
     vec![Box::new(JpegFormat)]
+}
+
+/// A JPEG encoded thumbnail image.
+pub struct Thumbnail(std::vec::Vec<u8>);
+
+impl Thumbnail {
+    /// Generate a thumbnail image where the longest side has at most the given size.
+    pub fn generate<P: AsRef<Path>>(
+        original_file: P,
+        size: u32,
+    ) -> Result<Thumbnail, failure::Error> {
+        use image::GenericImageView;
+        let img = image::open(original_file)?;
+
+        let width = img.width();
+        let height = img.height();
+
+        let new_img = if width > size || height > size {
+            img.resize(size, size, image::imageops::FilterType::Triangle)
+        } else {
+            img
+        };
+
+        let mut jpg = std::vec::Vec::new();
+        new_img.write_to(&mut jpg, image::ImageOutputFormat::JPEG(90))?;
+
+        Ok(Thumbnail(jpg))
+    }
+
+    pub fn from_jpg_bytes(data: std::vec::Vec<u8>) -> Self {
+        Thumbnail(data)
+    }
+
+    /// Return a JPG encoded version of the thumbnail.
+    pub fn as_jpg_bytes(&self) -> &[u8] {
+        self.0.as_ref()
+    }
+}
+
+impl ToSql for Thumbnail {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        self.as_jpg_bytes().to_sql()
+    }
+}
+
+impl FromSql for Thumbnail {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        let blob = value.as_blob()?;
+        Ok(Thumbnail::from_jpg_bytes(Vec::from(blob)))
+    }
 }

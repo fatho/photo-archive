@@ -1,6 +1,6 @@
 //! General CLI functions.
 use photo_archive::clone;
-use photo_archive::library::{meta, thumb, LibraryFiles};
+use photo_archive::library::{photodb, LibraryFiles};
 
 use failure::bail;
 use lazy_static::lazy_static;
@@ -65,24 +65,15 @@ pub fn init(files: &LibraryFiles, overwrite: bool) -> Result<(), failure::Error>
         );
     }
 
-    if files.meta_db_exists() {
+    if files.photo_db_exists() {
         if overwrite {
-            photo_archive::util::backup_file(&files.meta_db_file, true)?;
+            photo_archive::util::backup_file(&files.photo_db_file, true)?;
         } else {
-            bail!("Meta database already exists");
+            bail!("Photo database already exists");
         }
     }
 
-    if files.thumb_db_exists() {
-        if overwrite {
-            photo_archive::util::backup_file(&files.thumb_db_file, true)?;
-        } else {
-            bail!("Thumb database already exists");
-        }
-    }
-
-    let _ = meta::MetaDatabase::open_or_create(&files.meta_db_file)?;
-    let _ = thumb::ThumbDatabase::open_or_create(&files.thumb_db_file)?;
+    let _ = photodb::PhotoDatabase::open_or_create(&files.photo_db_file)?;
 
     info!("Library initialized");
 
@@ -105,25 +96,26 @@ pub fn status(library_files: &LibraryFiles) -> Result<(), failure::Error> {
 
     print_status(
         "Meta",
-        &library_files.meta_db_file,
-        library_files.meta_db_exists(),
+        &library_files.photo_db_file,
+        library_files.photo_db_exists(),
     );
-    if library_files.meta_db_exists() {
-        let meta_db = meta::MetaDatabase::open_or_create(&library_files.meta_db_file)?;
+    if library_files.photo_db_exists() {
+        let meta_db = photodb::PhotoDatabase::open_or_create(&library_files.photo_db_file)?;
         match meta_db.query_count() {
             Ok(count) => println!("  Photo count: {}", count),
             Err(err) => println!("  Photo count: n/a ({})", err),
         }
     }
 
-    print_status(
-        "Thumb",
-        &library_files.thumb_db_file,
-        library_files.thumb_db_exists(),
-    );
-    if library_files.thumb_db_exists() {
-        let _thumb_db = meta::MetaDatabase::open_or_create(&library_files.meta_db_file)?;
-    }
-
     Ok(())
+}
+
+/// Temporarily disable a progress bar for printing.
+pub fn suspend_progress<R, F: FnOnce() -> R>(bar: &indicatif::ProgressBar, callback: F) -> R {
+    let old_pos = bar.position();
+    bar.finish_and_clear();
+    let result = callback();
+    bar.reset();
+    bar.set_position(old_pos);
+    result
 }

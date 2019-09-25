@@ -1,7 +1,8 @@
 //! CLI implementation for the thumbs subcommand.
 
 use crate::cli;
-use photo_archive::library::{meta, thumb, LibraryFiles};
+use photo_archive::library::{photodb, LibraryFiles};
+use photo_archive::formats;
 use std::path::Path;
 use log::info;
 
@@ -10,11 +11,11 @@ pub fn delete(
     context: &mut cli::AppContext,
     library: &LibraryFiles
 ) -> Result<(), failure::Error> {
-    let thumb_db = thumb::ThumbDatabase::open_or_create(&library.thumb_db_file)?;
+    let db = photodb::PhotoDatabase::open_or_create(&library.photo_db_file)?;
     context.check_interrupted()?;
 
     info!("Deleting all thumbnails");
-    thumb_db.delete_all_thumbnails()?;
+    db.delete_all_thumbnails()?;
     info!("Thumbnails deleted");
     Ok(())
 }
@@ -26,10 +27,9 @@ pub fn generate(
     regenerate: bool,
     retry_failed: bool,
 ) -> Result<(), failure::Error> {
-    let meta_db = meta::MetaDatabase::open_or_create(&library.meta_db_file)?;
-    let thumb_db = thumb::ThumbDatabase::open_or_create(&library.thumb_db_file)?;
+    let db = photodb::PhotoDatabase::open_or_create(&library.photo_db_file)?;
 
-    let all_photos = meta_db.query_all_photo_ids()?;
+    let all_photos = db.query_all_photo_ids()?;
 
     info!("Collecting photos to process");
 
@@ -39,16 +39,16 @@ pub fn generate(
 
     // compute the set of photos for which thumbnails need to be generated
     let mut photo_queue = Vec::new();
-    for photo in meta_db.query_all_photos()? {
+    for photo in db.query_all_photos()? {
         collect_progress_bar.inc(1);
         if context.check_interrupted().is_err() {
             // Don't return yet so that we can clean up the progress bar
             break;
         }
-        let state = thumb_db.query_thumbnail_state(photo.id)?;
-        if state == thumb::ThumbnailState::Absent
-            || (state == thumb::ThumbnailState::Present && regenerate)
-            || (state == thumb::ThumbnailState::Error && retry_failed)
+        let state = db.query_thumbnail_state(photo.id)?;
+        if state == photodb::ThumbnailState::Absent
+            || (state == photodb::ThumbnailState::Present && regenerate)
+            || (state == photodb::ThumbnailState::Error && retry_failed)
         {
             photo_queue.push(photo);
         }
@@ -74,8 +74,8 @@ pub fn generate(
         let full_path = library.root_dir.join(Path::new(&photo.relative_path));
         // TODO: add option for thumbnail size
         let thumbnail_result =
-            thumb::Thumbnail::generate(&full_path, 400).map_err(|e| format!("{}", e));
-        thumb_db.insert_thumbnail(photo.id, thumbnail_result.as_ref().map_err(|e| e.as_ref()))?;
+            formats::Thumbnail::generate(&full_path, 400).map_err(|e| format!("{}", e));
+        db.insert_thumbnail(photo.id, &thumbnail_result)?;
     }
 
     generate_progress_bar.finish_and_clear();
