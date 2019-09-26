@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use structopt::StructOpt;
 
 mod cli;
+mod progresslog;
 
 #[derive(Debug, StructOpt)]
 #[structopt(about = "photoctl - command line photo library manager")]
@@ -82,16 +83,27 @@ enum ThumbnailsCommand {
 }
 
 fn main() {
-    simplelog::TermLogger::init(
-        simplelog::LevelFilter::Info,
-        simplelog::Config::default(),
-        simplelog::TerminalMode::Stderr,
-    )
-    .unwrap();
+    // simplelog::TermLogger::init(
+    //     simplelog::LevelFilter::Info,
+    //     simplelog::Config::default(),
+    //     simplelog::TerminalMode::Stderr,
+    // )
+    // .unwrap();
+    let progress_logger = progresslog::TermProgressLogger::init(log::LevelFilter::Info).unwrap();
 
     let opts = GlobalOpts::from_args();
 
     debug!("Options: {:?}", opts);
+
+    progress_logger.begin_progress(50);
+    for i in 0..50 {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        if i % 10 == 0 {
+            info!("This is an information about {}", i);
+        }
+        progress_logger.inc_progress(1);
+    }
+    progress_logger.end_progress();
 
     // Defer the actual work to `run` so that all destructors of relevant objects
     // such as the sqlite connection can still run before exiting the process.
