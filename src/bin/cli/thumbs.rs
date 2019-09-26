@@ -73,8 +73,9 @@ pub fn generate(
 
         let full_path = library.root_dir.join(Path::new(&photo.relative_path));
         // TODO: add option for thumbnail size
+        let thumbnail_size = 400;
         let thumbnail_result =
-            formats::Thumbnail::generate(&full_path, 400).map_err(|e| format!("{}", e));
+            formats::Thumbnail::generate(&full_path, thumbnail_size).map_err(|e| format!("{}", e));
         db.insert_thumbnail(photo.id, &thumbnail_result)?;
     }
 

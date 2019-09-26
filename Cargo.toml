@@ -23,8 +23,17 @@ sha2 = "0.8"
 num_cpus = "1.10.1"
 lazy_static = "1.4.0"
 
-image = "0.22.2"
 kamadak-exif = "0.3.1"
 
 log = "0.4.8"
 simplelog = "0.7.3"
+
+[dependencies.image]
+version = "0.22.2"
+default-features = false
+features = ["jpeg"]
+
+[profile.release]
+# Embed debug information even in release builds
+# so that we can get meaningful profiles.
+debug = true

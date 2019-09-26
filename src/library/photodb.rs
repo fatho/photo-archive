@@ -111,7 +111,7 @@ impl PhotoDatabase {
         ls.map_err(Into::into)
     }
 
-    pub fn query_count(&self) -> database::Result<u32> {
+    pub fn query_photo_count(&self) -> database::Result<u32> {
         self.db
             .connection()
             .query_row("SELECT COUNT(*) FROM photos", NO_PARAMS, |row| row.get(0))
@@ -181,6 +181,21 @@ impl PhotoDatabase {
                 |row| row.get(0),
             )
             .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn query_thumbnail_count(&self) -> database::Result<u32> {
+        self.db
+            .connection()
+            .query_row("SELECT COUNT(*) FROM thumbnails", NO_PARAMS, |row| row.get(0))
+            .map_err(Into::into)
+    }
+
+    pub fn query_total_thumbnail_size(&self) -> database::Result<u64> {
+        self.db
+            .connection()
+            .query_row("SELECT COALESCE(SUM(LENGTH(thumbnail)), 0) FROM thumbnails WHERE thumbnail IS NOT NULL", NO_PARAMS, |row| row.get(0))
+            .map(|size_i: i64| size_i as u64)
             .map_err(Into::into)
     }
 

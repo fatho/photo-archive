@@ -95,16 +95,15 @@ pub fn status(library_files: &LibraryFiles) -> Result<(), failure::Error> {
     // TODO: open databases for status as readonly
 
     print_status(
-        "Meta",
+        "Photo database",
         &library_files.photo_db_file,
         library_files.photo_db_exists(),
     );
     if library_files.photo_db_exists() {
-        let meta_db = photodb::PhotoDatabase::open_or_create(&library_files.photo_db_file)?;
-        match meta_db.query_count() {
-            Ok(count) => println!("  Photo count: {}", count),
-            Err(err) => println!("  Photo count: n/a ({})", err),
-        }
+        let db = photodb::PhotoDatabase::open_or_create(&library_files.photo_db_file)?;
+        println!("  Photo count: {}", db.query_photo_count()?);
+        println!("  Thumbnail count: {}", db.query_thumbnail_count()?);
+        println!("  Total thumbnail size: {}", indicatif::HumanBytes(db.query_total_thumbnail_size()?));
     }
 
     Ok(())
