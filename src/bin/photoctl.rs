@@ -16,6 +16,10 @@ struct GlobalOpts {
     /// The root directory of the photo library to be used, if it is not the user's photo directory.
     photo_root: Option<PathBuf>,
 
+    /// How verbose should the log output be. Valid values are `error`, `warn`, `info`, `debug`, `trace` and `off`.
+    #[structopt(short, long, default_value = "info")]
+    verbosity: log::LevelFilter,
+
     #[structopt(subcommand)]
     command: Command,
 }
@@ -40,6 +44,12 @@ enum Command {
         #[structopt(subcommand)]
         command: ThumbnailsCommand,
     },
+    /// Generate shell completion values.
+    Completion {
+        /// The shell for which the completions should be generated.
+        #[structopt(short, long)]
+        shell: structopt::clap::Shell
+    }
 }
 
 #[derive(Debug, StructOpt)]
@@ -78,22 +88,13 @@ enum ThumbnailsCommand {
         /// Generate thumbnails also for images where thumbnail generation previously failed.
         retry_failed: bool,
     },
-    /// Remove cached thumbnails that are no longer referenced from a photo
-    Gc,
 }
 
 fn main() {
-    // simplelog::TermLogger::init(
-    //     simplelog::LevelFilter::Info,
-    //     simplelog::Config::default(),
-    //     simplelog::TerminalMode::Stderr,
-    // )
-    // .unwrap();
-    let progress_logger = progresslog::TermProgressLogger::init(log::LevelFilter::Info).unwrap();
-
-    let mut context = cli::AppContext::new(progress_logger);
-
     let opts = GlobalOpts::from_args();
+
+    let progress_logger = progresslog::TermProgressLogger::init(opts.verbosity).unwrap();
+    let mut context = cli::AppContext::new(progress_logger);
 
     debug!("Options: {:?}", opts);
 
@@ -177,8 +178,11 @@ fn run(opts: GlobalOpts, context: &mut cli::AppContext) -> Result<(), failure::E
                 regenerate,
                 retry_failed,
             } => cli::thumbs::generate(context, &library_files, *regenerate, *retry_failed),
-            ThumbnailsCommand::Gc => Ok(()),
             ThumbnailsCommand::Delete => cli::thumbs::delete(context, &library_files),
         },
+        Command::Completion { shell } => {
+            GlobalOpts::clap().gen_completions_to("photoctl", *shell, &mut std::io::stdout().lock());
+            Ok(())
+        }
     }
 }
