@@ -37,7 +37,7 @@ pub enum ThumbnailState {
 }
 
 impl PhotoDatabase {
-    pub fn open_or_create<P: AsRef<Path>>(path: P) -> database::Result<PhotoDatabase,> {
+    pub fn open_or_create<P: AsRef<Path>>(path: P) -> database::Result<PhotoDatabase> {
         let mut db = database::Database::open_or_create(path)?;
         db.upgrade()?;
         Ok(Self { db })
@@ -53,7 +53,12 @@ impl PhotoDatabase {
         Ok(PhotoId(self.db.connection().last_insert_rowid()))
     }
 
-    pub fn update_photo(&self, id: PhotoId, path_str: &str, info: &PhotoInfo) -> database::Result<usize> {
+    pub fn update_photo(
+        &self,
+        id: PhotoId,
+        path_str: &str,
+        info: &PhotoInfo,
+    ) -> database::Result<usize> {
         let created_str = info.created.map(|ts| ts.to_rfc3339()); // ISO formatted date
         Ok(self.db.connection().execute(
             "UPDATE photos SET rel_path = ?1, created = ?2, file_hash = ?3 WHERE id = ?4",
@@ -187,7 +192,9 @@ impl PhotoDatabase {
     pub fn query_thumbnail_count(&self) -> database::Result<u32> {
         self.db
             .connection()
-            .query_row("SELECT COUNT(*) FROM thumbnails", NO_PARAMS, |row| row.get(0))
+            .query_row("SELECT COUNT(*) FROM thumbnails", NO_PARAMS, |row| {
+                row.get(0)
+            })
             .map_err(Into::into)
     }
 
@@ -201,7 +208,9 @@ impl PhotoDatabase {
 
     /// Delete all cached thumbnails. Cannot be undone.
     pub fn delete_all_thumbnails(&self) -> database::Result<()> {
-        self.db.connection().execute("DELETE FROM thumbnails", NO_PARAMS)?;
+        self.db
+            .connection()
+            .execute("DELETE FROM thumbnails", NO_PARAMS)?;
         // We need to vacuum in order to reclaim the freed space
         self.db.connection().execute("VACUUM", NO_PARAMS)?;
         Ok(())

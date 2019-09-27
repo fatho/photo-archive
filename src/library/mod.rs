@@ -82,7 +82,8 @@ impl PhotoPath {
     pub fn from_relative(root_dir: &Path, relative_path: &str) -> Self {
         let full_path = root_dir.join(Path::new(relative_path));
         Self {
-            full_path, relative_path: relative_path.to_owned()
+            full_path,
+            relative_path: relative_path.to_owned(),
         }
     }
 }

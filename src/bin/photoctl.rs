@@ -91,28 +91,22 @@ fn main() {
     // .unwrap();
     let progress_logger = progresslog::TermProgressLogger::init(log::LevelFilter::Info).unwrap();
 
+    let mut context = cli::AppContext::new(progress_logger);
+
     let opts = GlobalOpts::from_args();
 
     debug!("Options: {:?}", opts);
 
-    progress_logger.begin_progress(50);
-    for i in 0..50 {
-        std::thread::sleep(std::time::Duration::from_millis(100));
-        if i % 10 == 0 {
-            info!("This is an information about {}", i);
-        }
-        progress_logger.inc_progress(1);
-    }
-    progress_logger.end_progress();
-
     // Defer the actual work to `run` so that all destructors of relevant objects
     // such as the sqlite connection can still run before exiting the process.
-    match run(opts) {
+    match run(opts, &mut context) {
         Err(err) => {
+            context.progress().end_progress();
             error!("Exiting due to error: {}", err);
             std::process::exit(1);
         }
         Ok(()) => {
+            context.progress().end_progress();
             std::process::exit(0);
         }
     }
@@ -121,9 +115,7 @@ fn main() {
 /// Dispatch work to other functions based on the program options that were given.
 /// In case of a failure, it returns an error.
 /// Exit is not called and a Ctrl+C handler is installed.
-fn run(opts: GlobalOpts) -> Result<(), failure::Error> {
-    let mut context = cli::AppContext::new();
-
+fn run(opts: GlobalOpts, context: &mut cli::AppContext) -> Result<(), failure::Error> {
     let photo_root = opts.photo_root.clone().unwrap_or_else(|| {
         let user_dirs = directories::UserDirs::new().expect("Cannot access user directories");
         let photo_path = user_dirs
@@ -142,7 +134,7 @@ fn run(opts: GlobalOpts) -> Result<(), failure::Error> {
         Command::Init { overwrite } => cli::init(&library_files, *overwrite),
         Command::Status => cli::status(&library_files),
         Command::Photos { command } => match command {
-            PhotosCommand::List => cli::photos::list(&mut context, &library_files),
+            PhotosCommand::List => cli::photos::list(context, &library_files),
             PhotosCommand::Scan {
                 jobs,
                 rescan,
@@ -172,7 +164,7 @@ fn run(opts: GlobalOpts) -> Result<(), failure::Error> {
                     .into());
                 }
                 cli::photos::scan(
-                    &mut context,
+                    context,
                     &library_files,
                     num_threads,
                     *rescan,
@@ -184,9 +176,9 @@ fn run(opts: GlobalOpts) -> Result<(), failure::Error> {
             ThumbnailsCommand::Generate {
                 regenerate,
                 retry_failed,
-            } => cli::thumbs::generate(&mut context, &library_files, *regenerate, *retry_failed),
+            } => cli::thumbs::generate(context, &library_files, *regenerate, *retry_failed),
             ThumbnailsCommand::Gc => Ok(()),
-            ThumbnailsCommand::Delete => cli::thumbs::delete(&mut context, &library_files),
+            ThumbnailsCommand::Delete => cli::thumbs::delete(context, &library_files),
         },
     }
 }

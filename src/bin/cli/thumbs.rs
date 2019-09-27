@@ -1,16 +1,13 @@
 //! CLI implementation for the thumbs subcommand.
 
 use crate::cli;
-use photo_archive::library::{photodb, LibraryFiles};
-use photo_archive::formats;
-use std::path::Path;
 use log::info;
+use photo_archive::formats;
+use photo_archive::library::{photodb, LibraryFiles};
+use std::path::Path;
 
 /// Remove all thumbnails
-pub fn delete(
-    context: &mut cli::AppContext,
-    library: &LibraryFiles
-) -> Result<(), failure::Error> {
+pub fn delete(context: &mut cli::AppContext, library: &LibraryFiles) -> Result<(), failure::Error> {
     let db = photodb::PhotoDatabase::open_or_create(&library.photo_db_file)?;
     context.check_interrupted()?;
 
@@ -33,14 +30,12 @@ pub fn generate(
 
     info!("Collecting photos to process");
 
-    let collect_progress_bar = indicatif::ProgressBar::new(all_photos.len() as u64)
-        .with_style(cli::PROGRESS_STYLE.clone());
-    collect_progress_bar.set_message("Collecting photos");
+    context.progress().begin_progress(all_photos.len());
 
     // compute the set of photos for which thumbnails need to be generated
     let mut photo_queue = Vec::new();
     for photo in db.query_all_photos()? {
-        collect_progress_bar.inc(1);
+        context.progress().inc_progress(1);
         if context.check_interrupted().is_err() {
             // Don't return yet so that we can clean up the progress bar
             break;
@@ -54,18 +49,19 @@ pub fn generate(
         }
     }
 
-    collect_progress_bar.finish_and_clear();
+    context.progress().end_progress();
     context.check_interrupted()?;
 
-    info!("Generating thumbnail images for {} photos", photo_queue.len());
+    info!(
+        "Generating thumbnail images for {} photos",
+        photo_queue.len()
+    );
 
-    let generate_progress_bar = indicatif::ProgressBar::new(photo_queue.len() as u64)
-        .with_style(cli::PROGRESS_STYLE.clone());
-    generate_progress_bar.set_message("Generating thumbnails");
+    context.progress().begin_progress(photo_queue.len());
 
     // actually generate the thumbnails
     for photo in photo_queue {
-        generate_progress_bar.inc(1);
+        context.progress().inc_progress(1);
         if context.check_interrupted().is_err() {
             // Don't return yet so that we can clean up the progress bar
             break;
@@ -79,7 +75,7 @@ pub fn generate(
         db.insert_thumbnail(photo.id, &thumbnail_result)?;
     }
 
-    generate_progress_bar.finish_and_clear();
+    context.progress().end_progress();
     context.check_interrupted()?;
 
     info!("Thumbnail image generation done");

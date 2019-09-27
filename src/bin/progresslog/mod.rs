@@ -1,10 +1,10 @@
 //! Module providing a combined interface to terminal logging via the `log` crate
-//! and progress bars via indicatif.
+//! and progress bars that can be interleaved with log messages.
 
-use log::{Log, Level, LevelFilter, Metadata, Record};
+use log::{Level, LevelFilter, Log, Metadata, Record};
 use std::fmt::Display;
-use std::time::{Instant, Duration};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// Logger that supports showing a progress bar while also still logging to stderr.
 pub struct TermProgressLogger {
@@ -81,64 +81,88 @@ impl Log for TermProgressLogger {
 
 #[derive(Clone)]
 pub struct ProgressLogger {
-    current_progress: Arc<Mutex<ProgressBarImpl>>,
+    current_progress: Option<Arc<Mutex<ProgressBarImpl>>>,
 }
 
+#[allow(unused)]
 impl ProgressLogger {
+    /// Create a new progress logger for the given terminal.
+    /// If the terminal is not user attended, the progress bar won't render anything at all.
     fn new(term: console::Term) -> Self {
         Self {
-            current_progress: Arc::new(Mutex::new(ProgressBarImpl::new(term))),
+            current_progress: if term.features().is_attended() {
+                Some(Arc::new(Mutex::new(ProgressBarImpl::new(term))))
+            } else {
+                None
+            },
         }
     }
 
+    /// Hide the progress bar, then run the callback, then show the progress bar again if it was previously visible.
     pub fn with_hidden_progress<R, F: FnOnce() -> R>(&self, callback: F) -> std::io::Result<R> {
-        let mut progress_bar = self.current_progress.lock().unwrap();
-        let hide_and_restore = progress_bar.state == ProgressBarState::Visible;
+        if let Some(progress_impl) = self.current_progress.as_ref() {
+            let mut progress_bar = progress_impl.lock().unwrap();
+            let hide_and_restore = progress_bar.state == ProgressBarState::Visible;
 
-        if hide_and_restore {
-            progress_bar.clear()?;
+            if hide_and_restore {
+                progress_bar.clear()?;
+            }
+            let result = callback();
+            if hide_and_restore {
+                progress_bar.draw()?;
+            }
+            Ok(result)
+        } else {
+            Ok(callback())
         }
-        let result = callback();
-        if hide_and_restore {
-            progress_bar.draw()?;
-        }
-        Ok(result)
     }
 
     pub fn begin_progress(&self, total_progress: usize) {
-        let mut progress_bar = self.current_progress.lock().unwrap();
-        progress_bar.set_progress(0);
-        progress_bar.set_total(total_progress);
-        let _ = progress_bar.draw();
+        if let Some(progress_impl) = self.current_progress.as_ref() {
+            let mut progress_bar = progress_impl.lock().unwrap();
+            progress_bar.set_progress(0);
+            progress_bar.set_total(total_progress);
+            let _ = progress_bar.draw();
+        }
     }
 
     pub fn end_progress(&self) {
-        let mut progress_bar = self.current_progress.lock().unwrap();
-        let _ = progress_bar.clear();
+        if let Some(progress_impl) = self.current_progress.as_ref() {
+            let mut progress_bar = progress_impl.lock().unwrap();
+            let _ = progress_bar.clear();
+        }
     }
 
     pub fn inc_progress(&self, delta: usize) {
-        let mut progress_bar = self.current_progress.lock().unwrap();
-        progress_bar.inc_progress(delta);
-        let _ = progress_bar.refresh();
+        if let Some(progress_impl) = self.current_progress.as_ref() {
+            let mut progress_bar = progress_impl.lock().unwrap();
+            progress_bar.inc_progress(delta);
+            let _ = progress_bar.refresh();
+        }
     }
 
     pub fn inc_total(&self, delta: usize) {
-        let mut progress_bar = self.current_progress.lock().unwrap();
-        progress_bar.inc_total(delta);
-        let _ = progress_bar.refresh();
+        if let Some(progress_impl) = self.current_progress.as_ref() {
+            let mut progress_bar = progress_impl.lock().unwrap();
+            progress_bar.inc_total(delta);
+            let _ = progress_bar.refresh();
+        }
     }
 
     pub fn set_total(&self, total: usize) {
-        let mut progress_bar = self.current_progress.lock().unwrap();
-        progress_bar.set_total(total);
-        let _ = progress_bar.refresh();
+        if let Some(progress_impl) = self.current_progress.as_ref() {
+            let mut progress_bar = progress_impl.lock().unwrap();
+            progress_bar.set_total(total);
+            let _ = progress_bar.refresh();
+        }
     }
 
     pub fn set_progress(&self, progress: usize) {
-        let mut progress_bar = self.current_progress.lock().unwrap();
-        progress_bar.set_progress(progress);
-        let _ = progress_bar.refresh();
+        if let Some(progress_impl) = self.current_progress.as_ref() {
+            let mut progress_bar = progress_impl.lock().unwrap();
+            progress_bar.set_progress(progress);
+            let _ = progress_bar.refresh();
+        }
     }
 }
 
@@ -161,7 +185,6 @@ struct ProgressBarImpl {
     current_progress: usize,
     state: ProgressBarState,
     last_update: Instant,
-    disabled: bool,
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -172,19 +195,20 @@ enum ProgressBarState {
 
 impl ProgressBarImpl {
     pub fn new(term: console::Term) -> Self {
-        let disabled = ! term.features().is_attended();
         Self {
             term,
             total_progress: 0,
             current_progress: 0,
             state: ProgressBarState::Hidden,
             last_update: Instant::now(),
-            disabled,
         }
     }
 
     pub fn inc_progress(&mut self, delta: usize) {
-        self.current_progress = self.current_progress.saturating_add(delta).min(self.total_progress);
+        self.current_progress = self
+            .current_progress
+            .saturating_add(delta)
+            .min(self.total_progress);
     }
 
     pub fn inc_total(&mut self, delta: usize) {
@@ -222,9 +246,8 @@ impl ProgressBarImpl {
 
     /// Draw the progress bar like this: ` [=========>         ] 10/20 `
     pub fn draw(&mut self) -> std::io::Result<()> {
-        if self.disabled || (self.state == ProgressBarState::Visible && ! self.check_rate_limit()) {
-            // Do not render the progress bar if the terminal is unattended,
-            // or if the progress bar is already visible but we hit the rate limiting.
+        if self.state == ProgressBarState::Visible && !self.check_rate_limit() {
+            // Do not render if the progress bar is already visible but we hit the rate limiting.
             return Ok(());
         }
 
@@ -241,14 +264,15 @@ impl ProgressBarImpl {
         if remaining > 0 {
             bar_text.push(' ');
             bar_text.push('[');
-            let pos = (self.current_progress * remaining / self.total_progress.max(1)).min(remaining);
+            let pos =
+                (self.current_progress * remaining / self.total_progress.max(1)).min(remaining);
             for _ in 0..pos {
                 bar_text.push('=')
             }
             if pos < remaining {
                 bar_text.push('>');
             }
-            for _ in pos + 1 .. remaining {
+            for _ in pos + 1..remaining {
                 bar_text.push(' ');
             }
             bar_text.push(']');

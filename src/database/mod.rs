@@ -59,7 +59,11 @@ where
             version: current_version,
         })?;
 
-        Ok(Self { conn, schema, filename })
+        Ok(Self {
+            conn,
+            schema,
+            filename,
+        })
     }
 
     pub fn connection(&self) -> &Connection {
@@ -116,7 +120,11 @@ where
     }
 
     fn run_migration(&mut self, target: Version) -> Result<()> {
-        info!("{}: Migrating to version {}", self.filename.to_string_lossy(), target.0);
+        info!(
+            "{}: Migrating to version {}",
+            self.filename.to_string_lossy(),
+            target.0
+        );
 
         let new_schema =
             S::from_version(target).ok_or(Error::UnknownSchemaVersion { version: target })?;

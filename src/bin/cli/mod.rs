@@ -2,8 +2,8 @@
 use photo_archive::clone;
 use photo_archive::library::{photodb, LibraryFiles};
 
+use crate::progresslog::ProgressLogger;
 use failure::bail;
-use lazy_static::lazy_static;
 use log::{info, warn};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -12,24 +12,21 @@ use std::sync::Arc;
 pub mod photos;
 pub mod thumbs;
 
-lazy_static! {
-    pub static ref PROGRESS_STYLE: indicatif::ProgressStyle =
-        indicatif::ProgressStyle::default_bar()
-            .progress_chars("=> ")
-            .template("{msg} [{wide_bar}] {pos}/{len} ({eta})");
-}
-
-/// Contains things that are relevant curing the whole execution of the app.
+/// Contains things that are relevant curing the whole execution of the app,
+/// mainly related to the CLI.
 pub struct AppContext {
     /// A flag that indicates whether the process was interrupted (via SIGINT/Ctrl+C)
     /// and should terminate as fast as possible.
     interrupted: Arc<AtomicBool>,
+    /// Allows displaying a progress bar for interactive command line runs.
+    /// When there is no terminal, no progress bar is rendered.
+    progress_logger: ProgressLogger,
 }
 
 impl AppContext {
     /// Create a new application context.
     /// This also installs a Ctrl+C handler.
-    pub fn new() -> Self {
+    pub fn new(progress_logger: ProgressLogger) -> Self {
         let interrupted = Arc::new(AtomicBool::new(false));
 
         let handler_result = ctrlc::set_handler(clone!(interrupted => move || {
@@ -41,7 +38,10 @@ impl AppContext {
             warn!("Error setting Ctrl+C handler, proceeding anyway: {}", err)
         };
 
-        Self { interrupted }
+        Self {
+            interrupted,
+            progress_logger,
+        }
     }
 
     /// Check whether the process has received an interruption signal (SIGINT on linux),
@@ -52,6 +52,10 @@ impl AppContext {
         } else {
             Ok(())
         }
+    }
+
+    pub fn progress(&self) -> &ProgressLogger {
+        &self.progress_logger
     }
 }
 
@@ -103,18 +107,11 @@ pub fn status(library_files: &LibraryFiles) -> Result<(), failure::Error> {
         let db = photodb::PhotoDatabase::open_or_create(&library_files.photo_db_file)?;
         println!("  Photo count: {}", db.query_photo_count()?);
         println!("  Thumbnail count: {}", db.query_thumbnail_count()?);
-        println!("  Total thumbnail size: {}", indicatif::HumanBytes(db.query_total_thumbnail_size()?));
+        println!(
+            "  Total thumbnail size: {}",
+            indicatif::HumanBytes(db.query_total_thumbnail_size()?)
+        );
     }
 
     Ok(())
-}
-
-/// Temporarily disable a progress bar for printing.
-pub fn suspend_progress<R, F: FnOnce() -> R>(bar: &indicatif::ProgressBar, callback: F) -> R {
-    let old_pos = bar.position();
-    bar.finish_and_clear();
-    let result = callback();
-    bar.reset();
-    bar.set_position(old_pos);
-    result
 }

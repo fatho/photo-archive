@@ -99,14 +99,11 @@ pub fn scan(
 
     // STEP 1 - Collect files
 
-    let collect_progress_bar = indicatif::ProgressBar::new_spinner();
-    collect_progress_bar.set_message("Collecting files");
+    info!("Collecting files");
 
     let mut files_to_scan = Vec::new();
     let mut add_file = |filename: PathBuf| -> Result<(), failure::Error> {
         stats.inc_total();
-
-        collect_progress_bar.tick();
         context.check_interrupted()?;
 
         match PhotoPath::from_absolute(&library.root_dir, &filename) {
@@ -149,8 +146,6 @@ pub fn scan(
         }
     }
 
-    collect_progress_bar.finish_and_clear();
-
     info!(
         "Collected {} files ({} skipped, {} failed)",
         files_to_scan.len(),
@@ -160,13 +155,10 @@ pub fn scan(
 
     // STEP 2 - Scan files
 
-    let progress_bar = indicatif::ProgressBar::new(0).with_style(
-        indicatif::ProgressStyle::default_bar()
-            .progress_chars("=> ")
-            .template("{msg} [{wide_bar}] {pos}/{len} ({eta})"),
-    );
-    progress_bar.set_length(files_to_scan.len() as u64);
-    progress_bar.set_message("Scanning");
+    info!("Scanning files");
+
+    let progress_bar = context.progress();
+    context.progress().begin_progress(files_to_scan.len());
 
     let insert_result =
         |(photo_id, photo_path, scan_result): ScanResult| -> Result<(), failure::Error> {
@@ -180,29 +172,23 @@ pub fn scan(
                     stats.inc_added()
                 }
                 Ok(None) => {
-                    // Prevent progress bar from flickering when nothing is actually logged
-                    if log::max_level() >= log::LevelFilter::Debug {
-                        super::suspend_progress(&progress_bar, || {
-                            debug!(
-                                "Could not scan {}: file format not supported",
-                                photo_path.full_path.to_string_lossy(),
-                            );
-                        });
-                    }
+                    debug!(
+                        "Could not scan {}: file format not supported",
+                        photo_path.full_path.to_string_lossy(),
+                    );
                     stats.inc_skipped()
                 }
                 Err(err) => {
-                    super::suspend_progress(&progress_bar, || {
-                        error!(
-                            "Failed to scan {}: {}",
-                            photo_path.full_path.to_string_lossy(),
-                            err
-                        );
-                    });
+                    error!(
+                        "Failed to scan {}: {}",
+                        photo_path.full_path.to_string_lossy(),
+                        err
+                    );
                     stats.inc_failed()
                 }
             }
-            progress_bar.inc(1);
+
+            progress_bar.inc_progress(1);
             Ok(())
         };
 
@@ -268,7 +254,7 @@ pub fn scan(
             .collect::<Result<(), _>>()?;
     }
 
-    progress_bar.finish_and_clear();
+    progress_bar.end_progress();
 
     info!(
         "Scanning done ({} total, {} added, {} failed, {} skipped)",
