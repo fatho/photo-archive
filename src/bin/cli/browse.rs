@@ -5,16 +5,19 @@ use actix_web::{web, App, HttpServer};
 use log::{info};
 use photo_archive::library::{LibraryFiles, PhotoDatabase};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::path::{Path, PathBuf};
 
 #[derive(Clone)]
 pub struct WebData {
     photo_db: Arc<Mutex<PhotoDatabase>>,
+    root_dir: PathBuf,
 }
 
 impl WebData {
-    pub fn new(db: PhotoDatabase) -> Self {
+    pub fn new(root_dir: PathBuf, db: PhotoDatabase) -> Self {
         Self {
             photo_db: Arc::new(Mutex::new(db)),
+            root_dir,
         }
     }
 
@@ -25,17 +28,24 @@ impl WebData {
             panic!("Photo database mutex was poisoned")
         }
     }
+
+    pub fn root_dir(&self) -> &Path {
+        &self.root_dir
+    }
 }
 
 /// Start a webserver for browsing the library.
 pub fn browse(
-    context: &mut cli::AppContext,
+    _context: &mut cli::AppContext,
     library: &LibraryFiles,
     port: u16,
 ) -> Result<(), failure::Error> {
     let address = format!("localhost:{}", port);
 
-    let data = WebData::new(PhotoDatabase::open_or_create(&library.photo_db_file)?);
+    let data = WebData::new(
+        library.root_dir.to_path_buf(),
+        PhotoDatabase::open_or_create(&library.photo_db_file)?,
+    );
 
     info!("Starting web server");
     info!("You can access the server at http://{}/", address);
@@ -49,12 +59,14 @@ pub fn browse(
                 web::resource("/photos/{id}/thumbnail")
                     .route(web::get().to(handlers::photo_thumbnail_get)),
             )
+            .service(
+                web::resource("/photos/{id}/original")
+                    .route(web::get().to(handlers::photo_original_get)),
+            )
             .default_service(web::to(web::HttpResponse::NotFound))
     })
     .bind(&address)?
     .run()?;
-
-    context.check_interrupted()?;
 
     Ok(())
 }
@@ -62,7 +74,7 @@ pub fn browse(
 mod handlers {
     use actix_web::{http, web, Responder};
     use log::error;
-    use photo_archive::library::PhotoId;
+    use photo_archive::library::{PhotoId, PhotoPath};
     use serde::Serialize;
 
     use super::WebData;
@@ -130,6 +142,35 @@ mod handlers {
                     relative_path: photo.relative_path,
                     created: photo.info.created,
                 }),
+            Ok(None) => web::HttpResponse::build(http::StatusCode::NOT_FOUND)
+                .content_type("application/json")
+                .json(ErrorResponse::from("Photo not found")),
+            Err(err) => {
+                error!("Error retrieving photo with id {}: {}", *info, err);
+
+                web::HttpResponse::build(http::StatusCode::INTERNAL_SERVER_ERROR)
+                    .content_type("application/json")
+                    .json(ErrorResponse::from("error while retrieving the photo"))
+            }
+        }
+    }
+
+    pub fn photo_original_get(data: web::Data<WebData>, info: web::Path<i64>) -> impl Responder {
+        // TODO: stream the result back instead of loading everything into memory
+        let photo_result = data.lock_photo_db()
+            .get_photo(PhotoId(*info))
+            .and_then(|maybe_photo| maybe_photo.map(|photo| {
+                let path = PhotoPath::from_relative(data.root_dir(), &photo.relative_path);
+                let data = std::fs::read(path.full_path)?;
+                // TODO: support other content types
+                Ok((data, "image/jpeg"))
+            }).transpose());
+
+        match photo_result {
+            Ok(Some((image_data, content_type))) => web::HttpResponse::build(http::StatusCode::OK)
+                .content_type(content_type)
+                .body(image_data)
+            ,
             Ok(None) => web::HttpResponse::build(http::StatusCode::NOT_FOUND)
                 .content_type("application/json")
                 .json(ErrorResponse::from("Photo not found")),
