@@ -5,13 +5,14 @@ use std::path::Path;
 use chrono::{DateTime, Utc};
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
-use rusqlite::types::ToSql;
+use rusqlite::types::{FromSql, ToSql};
 use rusqlite::{OptionalExtension, Transaction, NO_PARAMS};
 use serde::{Deserialize, Serialize};
+use log::debug;
 
 use crate::database;
 use crate::database::{Database, Schema};
-use crate::formats::{PhotoInfo, Thumbnail};
+use crate::formats::{Sha256Hash, PhotoInfo, Thumbnail};
 
 /// Database containing metadata about photos.
 #[derive(Debug)]
@@ -23,6 +24,18 @@ pub struct PhotoDatabase {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[repr(transparent)]
 pub struct PhotoId(pub i64);
+
+impl FromSql for PhotoId {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        FromSql::column_result(value).map(PhotoId)
+    }
+}
+
+impl ToSql for PhotoId {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        self.0.to_sql()
+    }
+}
 
 /// A row in the photo database
 pub struct Photo {
@@ -68,7 +81,7 @@ impl PhotoDatabase {
                 &path_str as &dyn ToSql,
                 &created_str,
                 &info.file_hash,
-                &id.0,
+                &id,
             ],
         )?)
     }
@@ -78,7 +91,7 @@ impl PhotoDatabase {
             .connection()
             .query_row(
                 "SELECT id, rel_path, created, file_hash FROM photos WHERE id = ?1",
-                &[id.0],
+                &[id],
                 Self::map_photo_row,
             )
             .optional()
@@ -86,15 +99,10 @@ impl PhotoDatabase {
     }
 
     pub fn query_photo_id_by_path(&self, path_str: &str) -> database::Result<Option<PhotoId>> {
-        self.db
-            .connection()
-            .query_row(
+        self.query_scalar_optional(
                 "SELECT id FROM photos WHERE rel_path = ?1",
-                &[path_str],
-                |row| row.get(0).map(PhotoId),
+                &[path_str]
             )
-            .optional()
-            .map_err(Into::into)
     }
 
     pub fn query_all_photo_ids(&self) -> database::Result<std::vec::Vec<PhotoId>> {
@@ -103,7 +111,7 @@ impl PhotoDatabase {
             .connection()
             .prepare("SELECT id FROM photos ORDER BY created DESC")?;
         let ls: rusqlite::Result<std::vec::Vec<PhotoId>> = stmt
-            .query_map(NO_PARAMS, |row| row.get(0).map(PhotoId))?
+            .query_map(NO_PARAMS, |row| row.get(0))?
             .collect();
         ls.map_err(Into::into)
     }
@@ -119,15 +127,12 @@ impl PhotoDatabase {
     }
 
     pub fn query_photo_count(&self) -> database::Result<u32> {
-        self.db
-            .connection()
-            .query_row("SELECT COUNT(*) FROM photos", NO_PARAMS, |row| row.get(0))
-            .map_err(Into::into)
+        self.query_scalar("SELECT COUNT(*) FROM photos", NO_PARAMS)
     }
 
     fn map_photo_row(row: &rusqlite::Row) -> rusqlite::Result<Photo> {
         Ok(Photo {
-            id: PhotoId(row.get(0)?),
+            id: row.get(0)?,
             relative_path: row.get(1)?,
             info: PhotoInfo {
                 created: row.get::<_, Option<String>>(2)?.map(|ts_str| {
@@ -147,28 +152,28 @@ impl PhotoDatabase {
         photo_id: PhotoId,
         thumbnail: &Result<Thumbnail, E>,
     ) -> database::Result<()> {
+        let thumbnail_or_null = &thumbnail.as_ref().ok();
+        let error_or_null = &thumbnail.as_ref().err().map(|err| err.as_ref());
+        let hash_or_null = thumbnail_or_null.map(|thumbnail| Sha256Hash::hash_bytes(thumbnail.as_jpg_bytes()));
+
         self.db.connection().execute(
-            "INSERT INTO thumbnails(photo_id, thumbnail, error) VALUES (?1, ?2, ?3) ON CONFLICT (photo_id) DO UPDATE SET thumbnail=?2, error=?3",
+            "INSERT INTO thumbnails(photo_id, thumbnail, error, hash) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (photo_id) DO UPDATE SET thumbnail=?2, error=?3, hash=?4",
             &[
-                &photo_id.0 as &dyn ToSql,
-                &thumbnail.as_ref().ok() as &dyn ToSql,
-                &thumbnail.as_ref().err().map(|err| err.as_ref()) as &dyn ToSql,
+                &photo_id as &dyn ToSql,
+                &thumbnail_or_null,
+                &error_or_null,
+                &hash_or_null,
             ])?;
         Ok(())
     }
 
     /// Check whether there is a thumbnail for the given photo in the database.
     pub fn query_thumbnail_state(&self, photo_id: PhotoId) -> database::Result<ThumbnailState> {
-        let code = self
-            .db
-            .connection()
-            .query_row(
+        let has_thumbnail = self.query_scalar_optional(
                 "SELECT thumbnail IS NOT NULL FROM thumbnails WHERE photo_id = ?1",
-                &[photo_id.0],
-                |row| row.get::<_, bool>(0),
-            )
-            .optional()?;
-        Ok(match code {
+                &[photo_id]
+            )?;
+        Ok(match has_thumbnail {
             None => ThumbnailState::Absent,
             Some(true) => ThumbnailState::Present,
             // since we can have either the thumbnail or the error,
@@ -180,32 +185,25 @@ impl PhotoDatabase {
     /// Retrieve the thumbnail for a given photo if it exists.
     pub fn query_thumbnail(&self, photo: PhotoId) -> database::Result<Option<Thumbnail>> {
         // TODO: return either thumbnail or the stored error
-        self.db
-            .connection()
-            .query_row(
+        self.query_scalar_optional(
                 "SELECT thumbnail FROM thumbnails WHERE photo_id = ?1 AND thumbnail IS NOT NULL",
-                &[photo.0],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(Into::into)
+                &[photo])
+    }
+
+    /// Retrieve the thumbnail hash for a given photo if it exists.
+    pub fn query_thumbnail_hash(&self, photo: PhotoId) -> database::Result<Option<Sha256Hash>> {
+        self.query_scalar_optional(
+                "SELECT hash FROM thumbnails WHERE photo_id = ?1 AND hash IS NOT NULL",
+                &[photo])
     }
 
     pub fn query_thumbnail_count(&self) -> database::Result<u32> {
-        self.db
-            .connection()
-            .query_row("SELECT COUNT(*) FROM thumbnails", NO_PARAMS, |row| {
-                row.get(0)
-            })
-            .map_err(Into::into)
+        self.query_scalar("SELECT COUNT(*) FROM thumbnails", NO_PARAMS)
     }
 
     pub fn query_total_thumbnail_size(&self) -> database::Result<u64> {
-        self.db
-            .connection()
-            .query_row("SELECT COALESCE(SUM(LENGTH(thumbnail)), 0) FROM thumbnails WHERE thumbnail IS NOT NULL", NO_PARAMS, |row| row.get(0))
-            .map(|size_i: i64| size_i as u64)
-            .map_err(Into::into)
+        self.query_scalar("SELECT COALESCE(SUM(LENGTH(thumbnail)), 0) FROM thumbnails WHERE thumbnail IS NOT NULL", NO_PARAMS)
+            .map(|size: i64| size as u64)
     }
 
     /// Delete all cached thumbnails. Cannot be undone.
@@ -216,6 +214,24 @@ impl PhotoDatabase {
         // We need to vacuum in order to reclaim the freed space
         self.db.connection().execute("VACUUM", NO_PARAMS)?;
         Ok(())
+    }
+
+    fn query_scalar<T, P>(&self, sql: &str, params: P) -> database::Result<T>
+    where
+        P: IntoIterator,
+        P::Item: ToSql,
+        T: FromSql, {
+        debug!("query_scalar: {}", sql);
+        self.db.connection().query_row(sql, params, |row| row.get(0)).map_err(Into::into)
+    }
+
+    fn query_scalar_optional<T, P>(&self, sql: &str, params: P) -> database::Result<Option<T>>
+    where
+        P: IntoIterator,
+        P::Item: ToSql,
+        T: FromSql, {
+        debug!("query_scalar_optional: {}", sql);
+        self.db.connection().query_row(sql, params, |row| row.get(0)).optional().map_err(Into::into)
     }
 }
 
@@ -259,7 +275,9 @@ impl Schema for PhotoDbSchema {
                     photo_id  INTEGER PRIMARY KEY REFERENCES photos(id) ON DELETE CASCADE,
                     thumbnail BLOB,
                     error     TEXT,
+                    hash      BLOB, -- The hash is used for caching thumbnails
                     CONSTRAINT thumbnails_present_xor_error CHECK ((thumbnail IS NOT NULL) = (error IS NULL))
+                    CONSTRAINT thumbnails_present_equiv_hash CHECK ((thumbnail IS NOT NULL) = (hash IS NOT NULL))
                     )",
                     NO_PARAMS,
                 )?;

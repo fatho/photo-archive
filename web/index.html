@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>Photo Archive</title>
+        <style>
+            html, body {
+                height: 100%;
+
+                overflow: hidden;
+            }
+
+            .header {
+                position: absolute;
+                left: 0;
+                top: 0;
+                right: 0;
+                height: 3em;
+
+                margin: 0;
+                padding: 0;
+
+                background-color: gray;
+            }
+
+            .viewport {
+                position: absolute;
+                left: 0;
+                top: 3em;
+                right: 0;
+                bottom: 0;
+
+                margin: 0;
+                padding: 0;
+
+                overflow: scroll;
+            }
+        </style>
+        <script lang="text/javascript">
+            var $ = function(sel) { return document.querySelector(sel); };
+
+            class App {
+                constructor() {
+                }
+
+                loaded() {
+                    console.log("page loaded");
+
+                    // create page DOM
+                    this.page = new ImageGridPage(document.getElementById('viewport'));
+
+                    // connect global resize event (that is the only one that actually works)
+                    window.onresize = this.eventHandler(this.resized);
+                }
+
+                resized() {
+                    console.log("window resized");
+                    this.imageGrid.invalidateVirtualElements();
+                }
+
+                /// Helper function for binding event handlers that should have access to "this".
+                eventHandler(handler) {
+                    let that = this;
+                    return function() {
+                        handler.call(that);
+                    }
+                }
+            }
+
+            class ImageGridPage {
+                constructor(viewport) {
+                    const imageWidth = 320;
+                    const imageHeight = 240;
+
+                    let that = this;
+                    let cellFactory = function() {
+                        let dom = document.createElement('div');
+                        dom.style.position = "absolute";
+                        dom.style.left = "0px";
+                        dom.style.top = "0px";
+                        dom.style.right = "0px";
+                        dom.style.bottom = "0px";
+                        dom.style.backgroundSize = "cover";
+                        dom.style.backgroundRepeat = "no-repeat";
+                        dom.style.backgroundPosition = "center";
+
+                        let update = function(index) {
+                            if (index < that._photos.length) {
+                                let photoId = that._photos[index].id;
+                                let imageUrl = "/photos/" + photoId + "/thumbnail";
+                                dom.style.backgroundImage = "url(\"" + imageUrl + "\")";
+                                dom.style.backgroundColor = "";
+                            } else {
+                                dom.style.backgroundImage = "";
+                                dom.style.backgroundColor = "red";
+                            }
+                        };
+                        return new VirtualizedCell(dom, update);
+                    };
+
+                    this._photos = new Array();
+                    this._imageGrid = new VirtualGrid(viewport, imageWidth, imageHeight, cellFactory);
+                    this.requestPhotos();
+                }
+
+                requestPhotos() {
+                    var req = new XMLHttpRequest();
+                    var that = this;
+                    req.onreadystatechange = function() {
+                        if (this.readyState == 4) {
+                            if (this.status == 200) {
+                                that.displayPhotos(JSON.parse(this.responseText));
+                            } else if (this.responseText === null) {
+                                that.displayError(this.status, null);
+                            } else {
+                                that.displayError(this.status, JSON.parse(this.responseText));
+                            }
+                        }
+                    };
+                    req.open("GET", "/photos", true);
+                    req.send();
+                }
+
+                displayPhotos(photoList) {
+                    console.log("Received %d photos", photoList.length);
+                    // TODO: sort the photo list
+                    this._photos = photoList;
+                    this._imageGrid.virtualCount = this._photos.length;
+                }
+
+                displayError(status, body) {
+                    console.log("Error: status %s, body %s", status, body);
+                }
+            }
+
+            class VirtualGrid {
+                /// Create a virtual grid within the given viewport element,
+                // viewport: DomElement
+                // cellWidth: pixels
+                // cellHeight: pixels
+                // cellFactory: () -> VirtualizedCell
+                constructor(viewport, cellWidth, cellHeight, cellFactory) {
+                    // the viewport sizer makes sure the scrollable range has exactly the size that we need
+                    let viewportSizer = document.createElement("div");
+                    viewportSizer.style.visibility = "hidden";
+                    viewportSizer.style.position = "absolute";
+                    viewportSizer.style.top = 0 + "px";
+                    viewportSizer.style.right = 0 + "px";
+                    viewportSizer.style.height = 0 + "px";
+                    viewportSizer.style.width = 1 + "px";
+                    viewport.appendChild(viewportSizer);
+
+                    let that = this;
+                    viewport.onscroll = function() { that.updateVirtualElements() };
+
+                    this._listElements = new Array(); // dom elements for the cells
+                    this._cellContents = new Array(); // VirtualizedCells for the contents
+                    this._cellFactory = cellFactory;
+
+                    this._viewport = viewport;
+                    this._viewportSizer = viewportSizer;
+                    this._cellWidth = cellWidth;
+                    this._cellHeight = cellHeight;
+                    this._visibleRowCount = 0; // number of rows that can be at most visible at the same time
+                    this._visibleColumnCount = 0; // number of columns that can be at most visible at the same time
+
+                    this._virtualCount = 0; // number of virtual elements
+
+                    this.invalidateVirtualElements();
+                }
+
+                get virtualCount() {
+                    return this._virtualCount;
+                }
+
+                set virtualCount(newCount) {
+                    this._virtualCount = newCount;
+                    this.updateVirtualElements();
+                }
+
+                /// Create or remove virtual elements as necessary.
+                invalidateVirtualElements() {
+                    let clientRect = this._viewport.getBoundingClientRect();
+
+                    // Compute the number of virtual elements that fit within the viewport
+                    this._visibleColumnCount = Math.max(1, Math.floor(clientRect.width / this._cellWidth));
+                    // We need to extra row for partially visible rows during scrolling
+                    this._visibleRowCount = Math.floor(clientRect.height / this._cellHeight) + 2;
+
+                    let requiredElements = this._visibleColumnCount * this._visibleRowCount;
+
+                    // Remove old elements
+                    while(this._listElements.length > 0) {
+                        let cellElement = this._listElements.pop();
+                        this._viewport.removeChild(cellElement);
+                    }
+                    this._cellContents = new Array();
+
+                    // add new virtual elements
+                    for(let i = 0; i < requiredElements; i++) {
+                        let cellElement = document.createElement('div');
+                        cellElement.style.position = "absolute";
+                        cellElement.style.width = this._cellWidth + "px";
+                        cellElement.style.height = this._cellHeight + "px";
+
+                        // DEBUG:
+                        cellElement.style.backgroundColor = "#FFC0C0";
+
+                        let virtualizedCell = this._cellFactory();
+
+                        cellElement.appendChild(virtualizedCell.element);
+
+                        this._viewport.appendChild(cellElement);
+                        this._listElements.push(cellElement);
+                        this._cellContents.push(virtualizedCell);
+                    }
+
+                    // position the new elements
+                    this.updateVirtualElements();
+                }
+
+                /// Put the virtual elements at the correct positions and set their content.
+                updateVirtualElements() {
+                    // update size of scroll area
+                    let scrollHeight = this._cellHeight * Math.ceil(this._virtualCount / this._visibleColumnCount);
+                    this._viewportSizer.style.height = scrollHeight + "px";
+
+                    // compute grid coordinates
+                    let clientRect = this._viewport.getBoundingClientRect();
+                    let pixelTop = this._viewport.scrollTop;
+                    let pixelBottom = pixelTop + clientRect.height;
+
+                    let gridTop = Math.floor(pixelTop / this._cellHeight);
+                    let gridPixelTop = this._cellHeight * gridTop;
+
+                    let horizontalExtraSpace = Math.max(0, clientRect.width - this._cellWidth * this._visibleColumnCount) / (this._visibleColumnCount + 1);
+
+                    // The index of the first visible virtual element
+                    let firstVirtualIndex = gridTop * this._visibleColumnCount;
+
+                    // compute positions of the virtual elements
+                    for(let gridY = 0; gridY < this._visibleRowCount; gridY++) {
+                        for(let gridX = 0; gridX < this._visibleColumnCount; gridX++) {
+                            let domElemIndex = gridY * this._visibleColumnCount + gridX;
+                            let virtualIndex = firstVirtualIndex + domElemIndex;
+
+                            let cellElement = this._listElements[domElemIndex];
+
+                            let cellLeft = horizontalExtraSpace + gridX * (horizontalExtraSpace + this._cellWidth);
+                            let cellTop = gridPixelTop + gridY * this._cellHeight;
+
+                            cellElement.style.left = cellLeft + "px";
+                            cellElement.style.top = cellTop + "px";
+
+                            this._cellContents[domElemIndex].update(virtualIndex);
+
+                            if (virtualIndex >= this._virtualCount || cellTop >= pixelBottom) {
+                                cellElement.style.display = "none";
+                            } else {
+                                cellElement.style.display = "block";
+                            }
+                        }
+                    }
+                }
+            }
+
+            class VirtualizedCell {
+                constructor(domElement, updateCallback) {
+                    this._domElement = domElement;
+                    this._updateCallback = updateCallback;
+                }
+
+                get element() {
+                    return this._domElement;
+                }
+
+                update(index) {
+                    this._updateCallback(index);
+                }
+            }
+
+
+            var app = new App();
+
+            // function onWindowResize() {
+            //     var viewport = $("#viewport");
+            //     let rect = viewport.getBoundingClientRect();
+            //     console.log("Viewport %d x %d", rect.width, rect.height);
+            // }
+        </script>
+    </head>
+    <body onload="app.loaded();">
+        <div class="header">
+            <h3>
+                Fabian's Fantastic Photo Archive  v1.0
+            </h3>
+        </div>
+        <div id="viewport" class="viewport">
+        </div>
+    </body>
+</html>

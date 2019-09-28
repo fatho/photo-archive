@@ -26,6 +26,25 @@ impl Sha256Hash {
         }
     }
 
+    /// Parse a hex string as SHA-256 hash.
+    pub fn from_hex(hash_hex: &[u8]) -> Option<Sha256Hash> {
+        if hash_hex.len() == SHA256_BYTES * 2 {
+            let mut bytes = [0; SHA256_BYTES];
+            hex::decode_to_slice(hash_hex, &mut bytes).ok()?;
+            Some(Sha256Hash(bytes))
+        } else {
+            None
+        }
+    }
+
+    /// Compute the SHA-256 hash of a byte array.
+    pub fn hash_bytes(bytes: &[u8]) -> Sha256Hash {
+        use sha2::digest::{FixedOutput, Input};
+        let mut hasher = sha2::Sha256::default();
+        hasher.input(bytes);
+        Sha256Hash::from_bytes(&hasher.fixed_result()).expect("SHA-256 is broken")
+    }
+
     /// Compute the SHA-256 hash of the given file.
     pub fn hash_file(filename: &Path) -> io::Result<Sha256Hash> {
         use io::Read;
