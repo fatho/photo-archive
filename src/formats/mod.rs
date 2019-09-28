@@ -133,6 +133,10 @@ impl Thumbnail {
     pub fn as_jpg_bytes(&self) -> &[u8] {
         self.0.as_ref()
     }
+
+    pub fn into_jpg_bytes(self) -> Vec<u8> {
+        self.0
+    }
 }
 
 impl ToSql for Thumbnail {

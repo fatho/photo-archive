@@ -7,6 +7,7 @@ use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rusqlite::types::ToSql;
 use rusqlite::{OptionalExtension, Transaction, NO_PARAMS};
+use serde::{Deserialize, Serialize};
 
 use crate::database;
 use crate::database::{Database, Schema};
@@ -19,7 +20,8 @@ pub struct PhotoDatabase {
 }
 
 /// Key for uniquely identifying a photo.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[repr(transparent)]
 pub struct PhotoId(pub i64);
 
 /// A row in the photo database
