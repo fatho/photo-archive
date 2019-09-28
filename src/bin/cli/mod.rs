@@ -1,6 +1,6 @@
 //! General CLI functions.
 use photo_archive::clone;
-use photo_archive::library::{photodb, LibraryFiles};
+use photo_archive::library::{LibraryFiles, PhotoDatabase};
 
 use crate::progresslog::ProgressLogger;
 use failure::bail;
@@ -77,7 +77,7 @@ pub fn init(files: &LibraryFiles, overwrite: bool) -> Result<(), failure::Error>
         }
     }
 
-    let _ = photodb::PhotoDatabase::open_or_create(&files.photo_db_file)?;
+    let _ = PhotoDatabase::open_or_create(&files.photo_db_file)?;
 
     info!("Library initialized");
 
@@ -104,7 +104,7 @@ pub fn status(library_files: &LibraryFiles) -> Result<(), failure::Error> {
         library_files.photo_db_exists(),
     );
     if library_files.photo_db_exists() {
-        let db = photodb::PhotoDatabase::open_or_create(&library_files.photo_db_file)?;
+        let db = PhotoDatabase::open_or_create(&library_files.photo_db_file)?;
         println!("  Photo count: {}", db.query_photo_count()?);
         println!("  Thumbnail count: {}", db.query_thumbnail_count()?);
         println!(

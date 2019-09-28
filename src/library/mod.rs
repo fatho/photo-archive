@@ -1,7 +1,9 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
-pub mod photodb;
+mod photodb;
+
+pub use photodb::*;
 
 /// Holds the paths that a photo library consists of.
 #[derive(Debug)]

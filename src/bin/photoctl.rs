@@ -3,7 +3,7 @@ use photo_archive::library::LibraryFiles;
 use directories;
 use log::{debug, error, info, warn};
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use structopt::StructOpt;
 
 mod cli;
@@ -48,8 +48,8 @@ enum Command {
     Completion {
         /// The shell for which the completions should be generated.
         #[structopt(short, long)]
-        shell: structopt::clap::Shell
-    }
+        shell: structopt::clap::Shell,
+    },
 }
 
 #[derive(Debug, StructOpt)]
@@ -58,13 +58,6 @@ enum PhotosCommand {
     List,
     /// Scan the library for new and updated photos.
     Scan {
-        /// Enable parallel file scanning using as many threads as indicated,
-        /// in addition to the main thread that does the inserting.
-        /// Defaults to the number of CPUs if no number is specified.
-        /// If omitted, scanning and inserting into the database happens sequentially.
-        #[structopt(short, long)]
-        #[allow(clippy::option_option)] // we need to distinguish ``, `-j` and `-j <num>`
-        jobs: Option<Option<usize>>,
         /// Also scan files that alrady exist in the database
         #[structopt(short, long)]
         rescan: bool,
@@ -102,12 +95,10 @@ fn main() {
     // such as the sqlite connection can still run before exiting the process.
     match run(opts, &mut context) {
         Err(err) => {
-            context.progress().end_progress();
             error!("Exiting due to error: {}", err);
             std::process::exit(1);
         }
         Ok(()) => {
-            context.progress().end_progress();
             std::process::exit(0);
         }
     }
@@ -136,20 +127,15 @@ fn run(opts: GlobalOpts, context: &mut cli::AppContext) -> Result<(), failure::E
         Command::Status => cli::status(&library_files),
         Command::Photos { command } => match command {
             PhotosCommand::List => cli::photos::list(context, &library_files),
-            PhotosCommand::Scan {
-                jobs,
-                rescan,
-                paths,
-            } => {
-                let num_threads = jobs.map(|count| count.unwrap_or_else(num_cpus::get).min(1024));
-                let paths_to_scan: Vec<&Path> = if paths.is_empty() {
-                    vec![&library_files.root_dir]
+            PhotosCommand::Scan { rescan, paths } => {
+                let paths_to_scan: Vec<PathBuf> = if paths.is_empty() {
+                    vec![library_files.root_dir.clone()]
                 } else {
                     paths
                         .iter()
                         .filter_map(|path| {
                             if path.strip_prefix(&library_files.root_dir).is_ok() {
-                                Some(path.as_ref())
+                                Some(path.clone())
                             } else {
                                 warn!("Ignoring non-library path {}", path.to_string_lossy());
                                 None
@@ -164,13 +150,7 @@ fn run(opts: GlobalOpts, context: &mut cli::AppContext) -> Result<(), failure::E
                     )
                     .into());
                 }
-                cli::photos::scan(
-                    context,
-                    &library_files,
-                    num_threads,
-                    *rescan,
-                    &paths_to_scan,
-                )
+                cli::photos::scan(context, &library_files, *rescan, &paths_to_scan)
             }
         },
         Command::Thumbnails { command } => match command {
@@ -181,7 +161,11 @@ fn run(opts: GlobalOpts, context: &mut cli::AppContext) -> Result<(), failure::E
             ThumbnailsCommand::Delete => cli::thumbs::delete(context, &library_files),
         },
         Command::Completion { shell } => {
-            GlobalOpts::clap().gen_completions_to("photoctl", *shell, &mut std::io::stdout().lock());
+            GlobalOpts::clap().gen_completions_to(
+                "photoctl",
+                *shell,
+                &mut std::io::stdout().lock(),
+            );
             Ok(())
         }
     }

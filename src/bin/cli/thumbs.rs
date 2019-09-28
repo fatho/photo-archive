@@ -1,14 +1,17 @@
 //! CLI implementation for the thumbs subcommand.
 
 use crate::cli;
+use failure::format_err;
 use log::info;
 use photo_archive::formats;
-use photo_archive::library::{photodb, LibraryFiles};
+use photo_archive::library::{LibraryFiles, PhotoDatabase, ThumbnailState};
+use rayon::prelude::*;
 use std::path::Path;
+use std::sync::Mutex;
 
 /// Remove all thumbnails
 pub fn delete(context: &mut cli::AppContext, library: &LibraryFiles) -> Result<(), failure::Error> {
-    let db = photodb::PhotoDatabase::open_or_create(&library.photo_db_file)?;
+    let db = PhotoDatabase::open_or_create(&library.photo_db_file)?;
     context.check_interrupted()?;
 
     info!("Deleting all thumbnails");
@@ -24,32 +27,32 @@ pub fn generate(
     regenerate: bool,
     retry_failed: bool,
 ) -> Result<(), failure::Error> {
-    let db = photodb::PhotoDatabase::open_or_create(&library.photo_db_file)?;
+    let photo_db = PhotoDatabase::open_or_create(&library.photo_db_file)?;
 
-    let all_photos = db.query_all_photo_ids()?;
+    let all_photos = photo_db.query_all_photo_ids()?;
 
     info!("Collecting photos to process");
 
-    context.progress().begin_progress(all_photos.len());
+    let progress_bar = context.progress().begin_progress(all_photos.len());
 
     // compute the set of photos for which thumbnails need to be generated
     let mut photo_queue = Vec::new();
-    for photo in db.query_all_photos()? {
-        context.progress().inc_progress(1);
+    for photo in photo_db.query_all_photos()? {
+        progress_bar.sender().inc_progress(1);
         if context.check_interrupted().is_err() {
             // Don't return yet so that we can clean up the progress bar
             break;
         }
-        let state = db.query_thumbnail_state(photo.id)?;
-        if state == photodb::ThumbnailState::Absent
-            || (state == photodb::ThumbnailState::Present && regenerate)
-            || (state == photodb::ThumbnailState::Error && retry_failed)
+        let state = photo_db.query_thumbnail_state(photo.id)?;
+        if state == ThumbnailState::Absent
+            || (state == ThumbnailState::Present && regenerate)
+            || (state == ThumbnailState::Error && retry_failed)
         {
             photo_queue.push(photo);
         }
     }
 
-    context.progress().end_progress();
+    drop(progress_bar);
     context.check_interrupted()?;
 
     info!(
@@ -57,25 +60,30 @@ pub fn generate(
         photo_queue.len()
     );
 
-    context.progress().begin_progress(photo_queue.len());
+    let progress_bar = context.progress().begin_progress(photo_queue.len());
+    let synced_photo_db = Mutex::new(photo_db);
 
     // actually generate the thumbnails
-    for photo in photo_queue {
-        context.progress().inc_progress(1);
-        if context.check_interrupted().is_err() {
-            // Don't return yet so that we can clean up the progress bar
-            break;
-        }
+    photo_queue
+        .into_par_iter()
+        .map(|photo| {
+            context.check_interrupted()?;
 
-        let full_path = library.root_dir.join(Path::new(&photo.relative_path));
-        // TODO: add option for thumbnail size
-        let thumbnail_size = 400;
-        let thumbnail_result =
-            formats::Thumbnail::generate(&full_path, thumbnail_size).map_err(|e| format!("{}", e));
-        db.insert_thumbnail(photo.id, &thumbnail_result)?;
-    }
+            progress_bar.sender().inc_progress(1);
 
-    context.progress().end_progress();
+            let full_path = library.root_dir.join(Path::new(&photo.relative_path));
+            // TODO: add option for thumbnail size
+            let thumbnail_size = 400;
+            let thumbnail_result = formats::Thumbnail::generate(&full_path, thumbnail_size)
+                .map_err(|e| format!("{}", e));
+            synced_photo_db
+                .lock()
+                .map_err(|_| format_err!("Database mutex was poisoned"))?
+                .insert_thumbnail(photo.id, &thumbnail_result)
+        })
+        .collect::<Result<(), failure::Error>>()?;
+
+    drop(progress_bar);
     context.check_interrupted()?;
 
     info!("Thumbnail image generation done");

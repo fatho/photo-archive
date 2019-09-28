@@ -86,17 +86,6 @@ pub struct PhotoInfo {
     //pub image_data_hash: Sha256Hash,
 }
 
-impl PhotoInfo {
-    /// Read the photo information from a file,
-    pub fn read_with_default_formats(filename: &Path) -> io::Result<Option<PhotoInfo>> {
-        load_default_formats()
-            .into_iter()
-            .find(|format| format.supported_extension(filename))
-            .map(|format| format.read_info(filename))
-            .transpose()
-    }
-}
-
 pub trait ImageFormat {
     /// Name of the image format. Used for presenting to the user.
     fn name(&self) -> &str;
@@ -108,15 +97,12 @@ pub trait ImageFormat {
     fn read_info(&self, path: &Path) -> std::io::Result<PhotoInfo>;
 }
 
-pub fn load_default_formats() -> Vec<Box<dyn ImageFormat>> {
-    vec![Box::new(JpegFormat)]
-}
-
 /// A JPEG encoded thumbnail image.
 pub struct Thumbnail(std::vec::Vec<u8>);
 
 impl Thumbnail {
     /// Generate a thumbnail image where the longest side has at most the given size.
+    /// TODO: make thumbnail generation part of image format
     pub fn generate<P: AsRef<Path>>(
         original_file: P,
         size: u32,

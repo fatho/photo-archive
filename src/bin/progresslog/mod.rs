@@ -79,6 +79,32 @@ impl Log for TermProgressLogger {
     }
 }
 
+pub struct AutoHideProgressBar {
+    logger: ProgressLogger,
+}
+
+impl AutoHideProgressBar {
+    pub fn sender(&self) -> ProgressSender {
+        ProgressSender { progress_bar: self }
+    }
+}
+
+impl Drop for AutoHideProgressBar {
+    fn drop(&mut self) {
+        self.logger.end_progress()
+    }
+}
+
+pub struct ProgressSender<'a> {
+    progress_bar: &'a AutoHideProgressBar,
+}
+
+impl<'a> ProgressSender<'a> {
+    pub fn inc_progress(&self, amount: usize) {
+        self.progress_bar.logger.inc_progress(amount);
+    }
+}
+
 #[derive(Clone)]
 pub struct ProgressLogger {
     current_progress: Option<Arc<Mutex<ProgressBarImpl>>>,
@@ -99,7 +125,7 @@ impl ProgressLogger {
     }
 
     /// Hide the progress bar, then run the callback, then show the progress bar again if it was previously visible.
-    pub fn with_hidden_progress<R, F: FnOnce() -> R>(&self, callback: F) -> std::io::Result<R> {
+    fn with_hidden_progress<R, F: FnOnce() -> R>(&self, callback: F) -> std::io::Result<R> {
         if let Some(progress_impl) = self.current_progress.as_ref() {
             let mut progress_bar = progress_impl.lock().unwrap();
             let hide_and_restore = progress_bar.state == ProgressBarState::Visible;
@@ -117,23 +143,26 @@ impl ProgressLogger {
         }
     }
 
-    pub fn begin_progress(&self, total_progress: usize) {
+    pub fn begin_progress(&self, total_progress: usize) -> AutoHideProgressBar {
         if let Some(progress_impl) = self.current_progress.as_ref() {
             let mut progress_bar = progress_impl.lock().unwrap();
             progress_bar.set_progress(0);
             progress_bar.set_total(total_progress);
             let _ = progress_bar.draw();
         }
+        AutoHideProgressBar {
+            logger: self.clone(),
+        }
     }
 
-    pub fn end_progress(&self) {
+    fn end_progress(&self) {
         if let Some(progress_impl) = self.current_progress.as_ref() {
             let mut progress_bar = progress_impl.lock().unwrap();
             let _ = progress_bar.clear();
         }
     }
 
-    pub fn inc_progress(&self, delta: usize) {
+    fn inc_progress(&self, delta: usize) {
         if let Some(progress_impl) = self.current_progress.as_ref() {
             let mut progress_bar = progress_impl.lock().unwrap();
             progress_bar.inc_progress(delta);
@@ -141,7 +170,7 @@ impl ProgressLogger {
         }
     }
 
-    pub fn inc_total(&self, delta: usize) {
+    fn inc_total(&self, delta: usize) {
         if let Some(progress_impl) = self.current_progress.as_ref() {
             let mut progress_bar = progress_impl.lock().unwrap();
             progress_bar.inc_total(delta);
@@ -149,7 +178,7 @@ impl ProgressLogger {
         }
     }
 
-    pub fn set_total(&self, total: usize) {
+    fn set_total(&self, total: usize) {
         if let Some(progress_impl) = self.current_progress.as_ref() {
             let mut progress_bar = progress_impl.lock().unwrap();
             progress_bar.set_total(total);
@@ -157,7 +186,7 @@ impl ProgressLogger {
         }
     }
 
-    pub fn set_progress(&self, progress: usize) {
+    fn set_progress(&self, progress: usize) {
         if let Some(progress_impl) = self.current_progress.as_ref() {
             let mut progress_bar = progress_impl.lock().unwrap();
             progress_bar.set_progress(progress);
