@@ -32,7 +32,8 @@
                 margin: 0;
                 padding: 0;
 
-                overflow: scroll;
+                overflow-x: hidden;
+                overflow-y: scroll;
             }
         </style>
         <script lang="text/javascript">
@@ -79,7 +80,7 @@
                         dom.style.top = "0px";
                         dom.style.right = "0px";
                         dom.style.bottom = "0px";
-                        dom.style.backgroundSize = "cover";
+                        dom.style.backgroundSize = "contain";
                         dom.style.backgroundRepeat = "no-repeat";
                         dom.style.backgroundPosition = "center";
 
@@ -152,9 +153,13 @@
                     let that = this;
                     viewport.onscroll = function() { that.updateVirtualElements() };
 
-                    this._listElements = new Array(); // dom elements for the cells
-                    this._cellContents = new Array(); // VirtualizedCells for the contents
+                    this._virtualizedContainers = new Array(); // dom elements for the cells
+                    this._virtualizedCells = new Array(); // VirtualizedCells for the contents
                     this._cellFactory = cellFactory;
+
+                    // properties used for optimizations
+                    this._virtualizedGridRow = new Array(); // if the virtualized element is visible, this is the row where it's located.
+                    this._visibleGridRows = new Set();
 
                     this._viewport = viewport;
                     this._viewportSizer = viewportSizer;
@@ -189,11 +194,13 @@
                     let requiredElements = this._visibleColumnCount * this._visibleRowCount;
 
                     // Remove old elements
-                    while(this._listElements.length > 0) {
-                        let cellElement = this._listElements.pop();
+                    while(this._virtualizedContainers.length > 0) {
+                        let cellElement = this._virtualizedContainers.pop();
                         this._viewport.removeChild(cellElement);
                     }
-                    this._cellContents = new Array();
+                    this._virtualizedCells = new Array();
+                    this._virtualizedGridRow = new Array();
+                    this._visibleGridRows = new Set();
 
                     // add new virtual elements
                     for(let i = 0; i < requiredElements; i++) {
@@ -202,17 +209,17 @@
                         cellElement.style.width = this._cellWidth + "px";
                         cellElement.style.height = this._cellHeight + "px";
 
-                        // DEBUG:
-                        cellElement.style.backgroundColor = "#FFC0C0";
-
                         let virtualizedCell = this._cellFactory();
 
                         cellElement.appendChild(virtualizedCell.element);
 
                         this._viewport.appendChild(cellElement);
-                        this._listElements.push(cellElement);
-                        this._cellContents.push(virtualizedCell);
+                        this._virtualizedContainers.push(cellElement);
+                        this._virtualizedCells.push(virtualizedCell);
+                        this._virtualizedGridRow.push(null);
                     }
+
+                    this._previousScrollTop = null;
 
                     // position the new elements
                     this.updateVirtualElements();
@@ -231,35 +238,72 @@
 
                     let gridTop = Math.floor(pixelTop / this._cellHeight);
                     let gridPixelTop = this._cellHeight * gridTop;
+                    let gridBottom = Math.ceil(pixelBottom / this._cellHeight);
 
                     let horizontalExtraSpace = Math.max(0, clientRect.width - this._cellWidth * this._visibleColumnCount) / (this._visibleColumnCount + 1);
 
                     // The index of the first visible virtual element
                     let firstVirtualIndex = gridTop * this._visibleColumnCount;
 
-                    // compute positions of the virtual elements
+                    // reset elements that moved out of the visible viewport
+                    let noLongerVisible = new Array();
+                    this._visibleGridRows.forEach(row => {
+                        if (row < gridTop || row >= gridBottom) {
+                            noLongerVisible.push(row);
+                        }
+                    });
+                    noLongerVisible.forEach(row => this._visibleGridRows.delete(row));
+
+                    let availableElements = new Array();
+                    console.log(this._virtualizedGridRow)
+
+                    for(let i = 0; i < this._virtualizedGridRow.length; i++) {
+                        let row = this._virtualizedGridRow[i];
+                        console.log("%s %s %s", row, gridTop, gridBottom);
+                        if (row === null || row < gridTop || row >= gridBottom) {
+                            this._virtualizedGridRow[i] = null;
+                            availableElements.push(i);
+                        }
+                    }
+
+                    console.log(availableElements)
+
+                    let newlyVisible = new Array();
+
+                    // new positions of the virtual elements
                     for(let gridY = 0; gridY < this._visibleRowCount; gridY++) {
                         for(let gridX = 0; gridX < this._visibleColumnCount; gridX++) {
-                            let domElemIndex = gridY * this._visibleColumnCount + gridX;
-                            let virtualIndex = firstVirtualIndex + domElemIndex;
+                            if (! this._visibleGridRows.has(gridTop + gridY)) {
+                                let gridOffset = gridY * this._visibleColumnCount + gridX;
+                                let virtualIndex = firstVirtualIndex + gridOffset;
 
-                            let cellElement = this._listElements[domElemIndex];
+                                if(virtualIndex < this._virtualCount) {
+                                    let virtualizedElementIndex = availableElements.pop();
+                                    let cellElement = this._virtualizedContainers[virtualizedElementIndex];
 
-                            let cellLeft = horizontalExtraSpace + gridX * (horizontalExtraSpace + this._cellWidth);
-                            let cellTop = gridPixelTop + gridY * this._cellHeight;
+                                    let cellLeft = horizontalExtraSpace + gridX * (horizontalExtraSpace + this._cellWidth);
+                                    let cellTop = gridPixelTop + gridY * this._cellHeight;
 
-                            cellElement.style.left = cellLeft + "px";
-                            cellElement.style.top = cellTop + "px";
+                                    cellElement.style.left = cellLeft + "px";
+                                    cellElement.style.top = cellTop + "px";
 
-                            this._cellContents[domElemIndex].update(virtualIndex);
+                                    this._virtualizedCells[virtualizedElementIndex].render(virtualIndex);
+                                    this._virtualizedGridRow[virtualizedElementIndex] = gridTop + gridY;
+                                    newlyVisible.push(gridTop + gridY);
 
-                            if (virtualIndex >= this._virtualCount || cellTop >= pixelBottom) {
-                                cellElement.style.display = "none";
-                            } else {
-                                cellElement.style.display = "block";
+                                    cellElement.style.display = "block";
+                                }
                             }
                         }
                     }
+
+                    newlyVisible.forEach(row => {
+                        this._visibleGridRows.add(row);
+                    });
+
+                    availableElements.forEach(elemIndex => {
+                        this._virtualizedContainers[elemIndex].style.display = "none";
+                    });
                 }
             }
 
@@ -273,8 +317,12 @@
                     return this._domElement;
                 }
 
-                update(index) {
+                render(index) {
                     this._updateCallback(index);
+                }
+
+                hide() {
+                    // TODO: implement hiding of elements
                 }
             }
 
