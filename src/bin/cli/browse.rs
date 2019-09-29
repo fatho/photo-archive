@@ -2,10 +2,10 @@
 
 use crate::cli;
 use actix_web::{web, App, HttpServer};
-use log::{info};
+use log::info;
 use photo_archive::library::{LibraryFiles, PhotoDatabase};
-use std::sync::{Arc, Mutex, MutexGuard};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Clone)]
 pub struct WebData {
@@ -38,19 +38,16 @@ impl WebData {
 pub fn browse(
     _context: &mut cli::AppContext,
     library: &LibraryFiles,
-    port: u16,
+    binds: &[String],
 ) -> Result<(), failure::Error> {
-    let address = format!("localhost:{}", port);
-
     let data = WebData::new(
         library.root_dir.to_path_buf(),
         PhotoDatabase::open_or_create(&library.photo_db_file)?,
     );
 
     info!("Starting web server");
-    info!("You can access the server at http://{}/", address);
 
-    HttpServer::new(move || {
+    let factory = HttpServer::new(move || {
         App::new()
             .data(data.clone())
             .service(web::resource("/photos").route(web::get().to(handlers::photos_get)))
@@ -63,26 +60,23 @@ pub fn browse(
                 web::resource("/photos/{id}/original")
                     .route(web::get().to(handlers::photo_original_get)),
             )
-            .service(
-                web::resource("/").route(web::get().to(handlers::app_get)),
-            )
+            .service(web::resource("/").route(web::get().to(handlers::app_get)))
             .default_service(web::to(handlers::builtin_file_get))
-    })
-    .bind(&address)?
-    .run()?;
+    });
+    let factory = binds.iter().fold(Ok(factory), |factory, address| factory?.bind(address))?;
+    factory.run()?;
 
     Ok(())
 }
 
 mod handlers {
     use actix_web::{http, web, Responder};
-    use log::{info, error};
-    use photo_archive::library::{PhotoId, PhotoPath};
-    use photo_archive::formats::Sha256Hash;
-    use serde::Serialize;
     use failure::format_err;
+    use log::{error};
+    use photo_archive::formats::Sha256Hash;
+    use photo_archive::library::{PhotoId, PhotoPath};
+    use serde::Serialize;
     use std::path::Path;
-    use std::borrow::Cow;
 
     use super::WebData;
 
@@ -117,10 +111,12 @@ mod handlers {
         error_handler(|| {
             let current_dir = std::env::current_dir()?;
             let webdir = current_dir.join("web");
-            let filename = current_dir.join(Path::new(req.path().trim_start_matches('/'))).canonicalize()?;
+            let filename = current_dir
+                .join(Path::new(req.path().trim_start_matches('/')))
+                .canonicalize()?;
             let _ = filename.strip_prefix(webdir)?;
 
-            let content_type = filename.extension().and_then(|ext|
+            let content_type = filename.extension().and_then(|ext| {
                 if ext == "js" {
                     Some("text/javascript; charset=utf-8")
                 } else if ext == "css" {
@@ -128,7 +124,7 @@ mod handlers {
                 } else {
                     None
                 }
-            );
+            });
             let contents = std::fs::read(filename)?;
 
             Ok(web::HttpResponse::Ok()
@@ -145,54 +141,72 @@ mod handlers {
                     // Ok(static_response(req_etag, "image/x-icon", None, include_bytes!("../../../web/favicon.ico")))
                     let (content_type, contents) = read_web_file("/web/favicon.ico")?;
                     let hash = Sha256Hash::hash_bytes(&contents);
-                    Ok(dynamic_response(req_etag, "image/x-icon", Some(hash), contents))
+                    Ok(dynamic_response(
+                        req_etag,
+                        "image/x-icon",
+                        Some(hash),
+                        contents,
+                    ))
                 }
                 path if path.starts_with("/web") => {
                     let (content_type, contents) = read_web_file(path)?;
                     let hash = Sha256Hash::hash_bytes(&contents);
-                    Ok(dynamic_response(req_etag, content_type, Some(hash), contents))
+                    Ok(dynamic_response(
+                        req_etag,
+                        content_type,
+                        Some(hash),
+                        contents,
+                    ))
                 }
-                _ => {
-                    Ok(web::HttpResponse::NotFound()
-                        .content_type("application/json")
-                        .json(ErrorResponse::from("Not found")))
-                }
+                _ => Ok(web::HttpResponse::NotFound()
+                    .content_type("application/json")
+                    .json(ErrorResponse::from("Not found"))),
             }
         })
     }
 
-    fn static_response(req_etag: Option<Sha256Hash>, content_type: &str, etag: Option<Sha256Hash>, data: &'static [u8]) -> web::HttpResponse {
+    fn static_response(
+        req_etag: Option<Sha256Hash>,
+        content_type: &str,
+        etag: Option<Sha256Hash>,
+        data: &'static [u8],
+    ) -> web::HttpResponse {
         if req_etag.is_some() && req_etag == etag {
             web::HttpResponse::NotModified().into()
         } else {
             if let Some(etag) = etag {
                 web::HttpResponse::Ok()
-                .content_type(content_type)
-                .header("Cache-Control", "private, max-age=3600")
-                .header("ETag", format!("\"{}\"", etag))
-                .body(data)
+                    .content_type(content_type)
+                    .header("Cache-Control", "private, max-age=3600")
+                    .header("ETag", format!("\"{}\"", etag))
+                    .body(data)
             } else {
                 web::HttpResponse::Ok()
-                .content_type(content_type)
-                .body(data)
+                    .content_type(content_type)
+                    .body(data)
             }
         }
     }
 
-    fn dynamic_response(req_etag: Option<Sha256Hash>,content_type: &str, etag: Option<Sha256Hash>, data: Vec<u8>) -> web::HttpResponse {
+    fn dynamic_response(
+        req_etag: Option<Sha256Hash>,
+        content_type: &str,
+        etag: Option<Sha256Hash>,
+        data: Vec<u8>,
+    ) -> web::HttpResponse {
         if req_etag.is_some() && req_etag == etag {
             web::HttpResponse::NotModified().into()
         } else {
             if let Some(etag) = etag {
                 web::HttpResponse::Ok()
-                .content_type(content_type)
-                .header("Cache-Control", "private, max-age=3600")
-                .header("ETag", format!("\"{}\"", etag))
-                .body(data)
+                    .content_type(content_type)
+                    .header("Cache-Control", "private, max-age=3600")
+                    .header("ETag", format!("\"{}\"", etag))
+                    .body(data)
             } else {
                 web::HttpResponse::Ok()
-                .content_type(content_type)
-                .body(data)
+                    .content_type(content_type)
+                    .body(data)
             }
         }
     }
@@ -201,10 +215,12 @@ mod handlers {
     fn read_web_file(path: &str) -> Result<(&'static str, Vec<u8>), failure::Error> {
         let current_dir = std::env::current_dir()?;
         let webdir = current_dir.join("web");
-        let filename = current_dir.join(Path::new(path.trim_start_matches('/'))).canonicalize()?;
+        let filename = current_dir
+            .join(Path::new(path.trim_start_matches('/')))
+            .canonicalize()?;
         let _ = filename.strip_prefix(webdir)?;
 
-        let content_type = filename.extension().and_then(|ext|
+        let content_type = filename.extension().and_then(|ext| {
             if ext == "js" {
                 Some("text/javascript; charset=utf-8")
             } else if ext == "css" {
@@ -212,7 +228,7 @@ mod handlers {
             } else {
                 None
             }
-        );
+        });
         let contents = std::fs::read(filename)?;
         Ok((content_type.unwrap_or("application/octet-stream"), contents))
     }
@@ -262,7 +278,11 @@ mod handlers {
         })
     }
 
-    pub fn photo_original_get(req: web::HttpRequest, data: web::Data<WebData>, info: web::Path<i64>) -> impl Responder {
+    pub fn photo_original_get(
+        req: web::HttpRequest,
+        data: web::Data<WebData>,
+        info: web::Path<i64>,
+    ) -> impl Responder {
         error_handler(|| {
             let photo_id = PhotoId(*info);
             let etag_request = get_if_none_match_sha256(&req);
@@ -299,7 +319,11 @@ mod handlers {
         })
     }
 
-    pub fn photo_thumbnail_get(req: web::HttpRequest, data: web::Data<WebData>, info: web::Path<i64>) -> impl Responder {
+    pub fn photo_thumbnail_get(
+        req: web::HttpRequest,
+        data: web::Data<WebData>,
+        info: web::Path<i64>,
+    ) -> impl Responder {
         error_handler(|| {
             let photo_id = PhotoId(*info);
             let etag_request = get_if_none_match_sha256(&req);
@@ -318,7 +342,8 @@ mod handlers {
             };
 
             let response = if let Some(thumbnail) = thumbnail_result {
-                let etag = etag_result.ok_or(format_err!("Thumbnail {:?} without hash", photo_id))?;
+                let etag =
+                    etag_result.ok_or(format_err!("Thumbnail {:?} without hash", photo_id))?;
                 web::HttpResponse::Ok()
                     .content_type("image/jpeg")
                     .header("ETag", format!("\"{}\"", etag))
@@ -333,8 +358,9 @@ mod handlers {
         })
     }
 
-
-    fn error_handler<F: FnOnce() -> Result<web::HttpResponse, failure::Error>>(callback: F) -> web::HttpResponse {
+    fn error_handler<F: FnOnce() -> Result<web::HttpResponse, failure::Error>>(
+        callback: F,
+    ) -> web::HttpResponse {
         match callback() {
             Ok(response) => response,
             Err(err) => {
@@ -347,6 +373,9 @@ mod handlers {
     }
 
     fn get_if_none_match_sha256(req: &web::HttpRequest) -> Option<Sha256Hash> {
-        req.headers().get("If-None-Match").and_then(|value| value.as_bytes().get(1..65)).and_then(Sha256Hash::from_hex)
+        req.headers()
+            .get("If-None-Match")
+            .and_then(|value| value.as_bytes().get(1..65))
+            .and_then(Sha256Hash::from_hex)
     }
 }

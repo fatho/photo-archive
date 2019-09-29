@@ -51,9 +51,9 @@ enum Command {
         shell: structopt::clap::Shell,
     },
     Browse {
-        /// The port of the web server.
-        #[structopt(short, long, default_value = "8076")]
-        port: u16,
+        /// On which addresses the web server should listen.
+        #[structopt(short, long, default_value = "localhost:8076")]
+        bind: Vec<String>,
     },
 }
 
@@ -173,6 +173,6 @@ fn run(opts: GlobalOpts, context: &mut cli::AppContext) -> Result<(), failure::E
             );
             Ok(())
         }
-        Command::Browse { port } => cli::browse::browse(context, &library_files, *port),
+        Command::Browse { bind } => cli::browse::browse(context, &library_files, bind),
     }
 }

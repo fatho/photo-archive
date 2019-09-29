@@ -3,16 +3,16 @@
 use std::path::Path;
 
 use chrono::{DateTime, Utc};
+use log::debug;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rusqlite::types::{FromSql, ToSql};
 use rusqlite::{OptionalExtension, Transaction, NO_PARAMS};
 use serde::{Deserialize, Serialize};
-use log::debug;
 
 use crate::database;
 use crate::database::{Database, Schema};
-use crate::formats::{Sha256Hash, PhotoInfo, Thumbnail};
+use crate::formats::{PhotoInfo, Sha256Hash, Thumbnail};
 
 /// Database containing metadata about photos.
 #[derive(Debug)]
@@ -77,12 +77,7 @@ impl PhotoDatabase {
         let created_str = info.created.map(|ts| ts.to_rfc3339()); // ISO formatted date
         Ok(self.db.connection().execute(
             "UPDATE photos SET rel_path = ?1, created = ?2, file_hash = ?3 WHERE id = ?4",
-            &[
-                &path_str as &dyn ToSql,
-                &created_str,
-                &info.file_hash,
-                &id,
-            ],
+            &[&path_str as &dyn ToSql, &created_str, &info.file_hash, &id],
         )?)
     }
 
@@ -99,10 +94,7 @@ impl PhotoDatabase {
     }
 
     pub fn query_photo_id_by_path(&self, path_str: &str) -> database::Result<Option<PhotoId>> {
-        self.query_scalar_optional(
-                "SELECT id FROM photos WHERE rel_path = ?1",
-                &[path_str]
-            )
+        self.query_scalar_optional("SELECT id FROM photos WHERE rel_path = ?1", &[path_str])
     }
 
     pub fn query_all_photo_ids(&self) -> database::Result<std::vec::Vec<PhotoId>> {
@@ -110,9 +102,8 @@ impl PhotoDatabase {
             .db
             .connection()
             .prepare("SELECT id FROM photos ORDER BY created DESC")?;
-        let ls: rusqlite::Result<std::vec::Vec<PhotoId>> = stmt
-            .query_map(NO_PARAMS, |row| row.get(0))?
-            .collect();
+        let ls: rusqlite::Result<std::vec::Vec<PhotoId>> =
+            stmt.query_map(NO_PARAMS, |row| row.get(0))?.collect();
         ls.map_err(Into::into)
     }
 
@@ -154,7 +145,8 @@ impl PhotoDatabase {
     ) -> database::Result<()> {
         let thumbnail_or_null = &thumbnail.as_ref().ok();
         let error_or_null = &thumbnail.as_ref().err().map(|err| err.as_ref());
-        let hash_or_null = thumbnail_or_null.map(|thumbnail| Sha256Hash::hash_bytes(thumbnail.as_jpg_bytes()));
+        let hash_or_null =
+            thumbnail_or_null.map(|thumbnail| Sha256Hash::hash_bytes(thumbnail.as_jpg_bytes()));
 
         self.db.connection().execute(
             "INSERT INTO thumbnails(photo_id, thumbnail, error, hash) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (photo_id) DO UPDATE SET thumbnail=?2, error=?3, hash=?4",
@@ -170,9 +162,9 @@ impl PhotoDatabase {
     /// Check whether there is a thumbnail for the given photo in the database.
     pub fn query_thumbnail_state(&self, photo_id: PhotoId) -> database::Result<ThumbnailState> {
         let has_thumbnail = self.query_scalar_optional(
-                "SELECT thumbnail IS NOT NULL FROM thumbnails WHERE photo_id = ?1",
-                &[photo_id]
-            )?;
+            "SELECT thumbnail IS NOT NULL FROM thumbnails WHERE photo_id = ?1",
+            &[photo_id],
+        )?;
         Ok(match has_thumbnail {
             None => ThumbnailState::Absent,
             Some(true) => ThumbnailState::Present,
@@ -186,15 +178,17 @@ impl PhotoDatabase {
     pub fn query_thumbnail(&self, photo: PhotoId) -> database::Result<Option<Thumbnail>> {
         // TODO: return either thumbnail or the stored error
         self.query_scalar_optional(
-                "SELECT thumbnail FROM thumbnails WHERE photo_id = ?1 AND thumbnail IS NOT NULL",
-                &[photo])
+            "SELECT thumbnail FROM thumbnails WHERE photo_id = ?1 AND thumbnail IS NOT NULL",
+            &[photo],
+        )
     }
 
     /// Retrieve the thumbnail hash for a given photo if it exists.
     pub fn query_thumbnail_hash(&self, photo: PhotoId) -> database::Result<Option<Sha256Hash>> {
         self.query_scalar_optional(
-                "SELECT hash FROM thumbnails WHERE photo_id = ?1 AND hash IS NOT NULL",
-                &[photo])
+            "SELECT hash FROM thumbnails WHERE photo_id = ?1 AND hash IS NOT NULL",
+            &[photo],
+        )
     }
 
     pub fn query_thumbnail_count(&self) -> database::Result<u32> {
@@ -220,18 +214,27 @@ impl PhotoDatabase {
     where
         P: IntoIterator,
         P::Item: ToSql,
-        T: FromSql, {
+        T: FromSql,
+    {
         debug!("query_scalar: {}", sql);
-        self.db.connection().query_row(sql, params, |row| row.get(0)).map_err(Into::into)
+        self.db
+            .connection()
+            .query_row(sql, params, |row| row.get(0))
+            .map_err(Into::into)
     }
 
     fn query_scalar_optional<T, P>(&self, sql: &str, params: P) -> database::Result<Option<T>>
     where
         P: IntoIterator,
         P::Item: ToSql,
-        T: FromSql, {
+        T: FromSql,
+    {
         debug!("query_scalar_optional: {}", sql);
-        self.db.connection().query_row(sql, params, |row| row.get(0)).optional().map_err(Into::into)
+        self.db
+            .connection()
+            .query_row(sql, params, |row| row.get(0))
+            .optional()
+            .map_err(Into::into)
     }
 }
 

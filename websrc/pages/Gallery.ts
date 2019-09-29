@@ -34,6 +34,10 @@ export class GalleryPage implements Page {
         this.imageGrid.itemRenderer = new GalleryItemRenderer(this);
         let that = this;
         this.imageGrid.addEventListener('viewportchanged', function(this: HTMLElement, e: CustomEvent<ViewportChangedEventData>) {
+            if (e.detail.firstVirtualIndex >= that.photos.length) {
+                return;
+            }
+
             let created = that.photos[e.detail.firstVirtualIndex].created;
             let startTimestamp = "unknown date";
             if (created) {
