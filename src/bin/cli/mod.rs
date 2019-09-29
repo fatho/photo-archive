@@ -107,7 +107,9 @@ pub fn status(library_files: &LibraryFiles) -> Result<(), failure::Error> {
     if library_files.photo_db_exists() {
         let db = PhotoDatabase::open_or_create(&library_files.photo_db_file)?;
         println!("  Photo count: {}", db.query_photo_count()?);
-        println!("  Thumbnail count: {}", db.query_thumbnail_count()?);
+        let thumbnail_rows = db.query_thumbnail_row_count()?;
+        let thumbnail_failed = db.query_thumbnail_failed_count()?;
+        println!("  Thumbnail count: {} ({} errors)", thumbnail_rows - thumbnail_failed, thumbnail_failed);
         println!(
             "  Total thumbnail size: {}",
             indicatif::HumanBytes(db.query_total_thumbnail_size()?)

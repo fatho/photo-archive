@@ -51,6 +51,21 @@ pub enum ThumbnailState {
     Error,
 }
 
+
+/// Metadata about a thumbnail.
+pub struct ThumbnailInfo {
+    /// The photo the thumbnail belongs to.
+    pub photo_id: PhotoId,
+    /// The size of the stored thumbnail image in bytes.
+    pub size_bytes: Option<usize>,
+    /// The hash of the thumbnail image file.
+    pub hash: Option<Sha256Hash>,
+    /// The error message associated with the thumbnail in case the generation failed.
+    pub error: Option<String>,
+    /// The relative path of the photo in the library directory where it is stored.
+    pub relative_path: String,
+}
+
 impl PhotoDatabase {
     pub fn open_or_create<P: AsRef<Path>>(path: P) -> database::Result<PhotoDatabase> {
         let mut db = database::Database::open_or_create(path)?;
@@ -191,8 +206,26 @@ impl PhotoDatabase {
         )
     }
 
-    pub fn query_thumbnail_count(&self) -> database::Result<u32> {
+    pub fn query_thumbnail_row_count(&self) -> database::Result<u32> {
         self.query_scalar("SELECT COUNT(*) FROM thumbnails", NO_PARAMS)
+    }
+
+    pub fn query_thumbnail_failed_count(&self) -> database::Result<u32> {
+        self.query_scalar("SELECT COUNT(*) FROM thumbnails WHERE error IS NOT NULL", NO_PARAMS)
+    }
+
+    pub fn query_thumbnail_infos(&self) -> database::Result<Vec<ThumbnailInfo>> {
+        let rows = self.db.connection()
+            .prepare("SELECT photo_id, length(thumbnail), hash, error, rel_path FROM thumbnails t INNER JOIN photos p ON p.id = t.photo_id")?
+            .query_map(NO_PARAMS, |row| Ok(ThumbnailInfo {
+                photo_id: row.get(0)?,
+                size_bytes: row.get::<_, Option<i64>>(1)?.map(|val| val as usize),
+                hash: row.get(2)?,
+                error: row.get(3)?,
+                relative_path: row.get(4)?,
+            }))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     pub fn query_total_thumbnail_size(&self) -> database::Result<u64> {

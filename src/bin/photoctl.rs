@@ -94,6 +94,11 @@ enum ThumbnailsCommand {
         /// Generate thumbnails also for images where thumbnail generation previously failed.
         retry_failed: bool,
     },
+    List {
+        /// Only show errors that occurred while generating thumbnails
+        #[structopt(short, long)]
+        errors: bool,
+    }
 }
 
 fn main() {
@@ -172,6 +177,7 @@ fn run(opts: GlobalOpts, context: &mut cli::AppContext) -> Result<(), failure::E
                 retry_failed,
             } => cli::thumbs::generate(context, &library_files, regenerate, retry_failed),
             ThumbnailsCommand::Delete => cli::thumbs::delete(context, &library_files),
+            ThumbnailsCommand::List { errors } => cli::thumbs::list(context, &library_files, errors),
         },
         Command::Completion { shell } => {
             GlobalOpts::clap().gen_completions_to(

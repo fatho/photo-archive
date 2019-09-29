@@ -9,6 +9,50 @@ use rayon::prelude::*;
 use std::path::Path;
 use std::sync::Mutex;
 
+/// List all thumbnails and show statistics.
+pub fn list(context: &mut cli::AppContext, library: &LibraryFiles, errors: bool) -> Result<(), failure::Error> {
+    use std::fmt::Write;
+
+    let db = PhotoDatabase::open_or_create(&library.photo_db_file)?;
+    context.check_interrupted()?;
+
+    let infos = db.query_thumbnail_infos()?;
+
+    let mut line = String::new();
+
+    println!("Photo\tRelative path\tSize\tHash\tError");
+
+    for info in infos {
+        line.clear();
+        context.check_interrupted()?;
+
+        if errors && ! info.error.is_some() {
+            // TODO: filter in the database instead
+            continue;
+        }
+
+        write!(&mut line, "{}\t{}\t", info.photo_id.0, &info.relative_path).unwrap();
+
+        if let Some(size) = info.size_bytes {
+            write!(&mut line, "{}\t", indicatif::HumanBytes(size as u64)).unwrap();
+        } else {
+            write!(&mut line, "n/a\t").unwrap();
+        }
+
+        if let Some(hash) = info.hash {
+            write!(&mut line, "{:.8}..\t", hash).unwrap();
+        } else {
+            write!(&mut line, "n/a\t").unwrap();
+        }
+
+        write!(&mut line, "{}", info.error.unwrap_or(String::new())).unwrap();
+
+        println!("{}", line);
+    }
+
+    Ok(())
+}
+
 /// Remove all thumbnails
 pub fn delete(context: &mut cli::AppContext, library: &LibraryFiles) -> Result<(), failure::Error> {
     let db = PhotoDatabase::open_or_create(&library.photo_db_file)?;
