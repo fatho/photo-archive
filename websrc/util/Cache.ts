@@ -24,7 +24,7 @@ export class Lru<K, V> {
             evicted.push(new Evicted(key, value));
             count -= 1;
         }
-        this.verify();
+        // DEBUG: this.verify();
 
         return evicted;
     }
@@ -42,7 +42,7 @@ export class Lru<K, V> {
             this.newest = node;
             this.nodeMap.set(key, node);
         }
-        this.verify();
+        // DEBUG: this.verify();
     }
 
     get(key: K): V | undefined {
@@ -69,22 +69,7 @@ export class Lru<K, V> {
                 (this.newest as CacheNode<K, V>).newer = node;
                 this.newest = node;
             }
-            // if (node.newer != null) {
-            //     // The node was not the least recently used
-            //     node.newer.older = node.older;
-            //     if (node.older == null) {
-            //         // the node was the oldest one, so there is a new oldest one now
-            //         this.oldest = node.newer;
-            //     } else {
-            //         node.older.newer = node.newer;
-            //     }
-            //     // The node is becoming the newest
-            //     node.newer = null;
-            //     // we know that newest is not null here because the cache has at least one entry
-            //     node.older = this.newest;
-            //     (this.newest as CacheNode<K, V>).newer = node;
-            // }
-            this.verify();
+            // DEBUG: this.verify();
             return node.value;
         }
     }
@@ -104,7 +89,22 @@ export class Lru<K, V> {
                 node.older.newer = node.newer;
             }
         }
-        this.verify();
+        // DEBUG: this.verify();
+    }
+
+    /// Traverse the items in the cache from newest to oldest
+    forEach(f: (key: K, value: V) => void): void {
+        let current = this.newest;
+        while(current != null) {
+            f(current.key, current.value);
+            current = current.older;
+        }
+    };
+
+    clear(): void {
+        this.nodeMap.clear();
+        this.newest = null;
+        this.oldest = null;
     }
 
     private verify() {

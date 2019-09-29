@@ -66,7 +66,7 @@ pub fn browse(
             .service(
                 web::resource("/").route(web::get().to(handlers::app_get)),
             )
-            .default_service(web::to(handlers::develop_get))
+            .default_service(web::to(handlers::builtin_file_get))
     })
     .bind(&address)?
     .run()?;
@@ -82,6 +82,7 @@ mod handlers {
     use serde::Serialize;
     use failure::format_err;
     use std::path::Path;
+    use std::borrow::Cow;
 
     use super::WebData;
 
@@ -134,6 +135,86 @@ mod handlers {
                 .content_type(content_type.unwrap_or("application/octet-stream"))
                 .body(contents))
         })
+    }
+
+    pub fn builtin_file_get(req: web::HttpRequest) -> impl Responder {
+        error_handler(|| {
+            let req_etag = get_if_none_match_sha256(&req);
+            match req.path() {
+                "/favicon.ico" => {
+                    // Ok(static_response(req_etag, "image/x-icon", None, include_bytes!("../../../web/favicon.ico")))
+                    let (content_type, contents) = read_web_file("/web/favicon.ico")?;
+                    let hash = Sha256Hash::hash_bytes(&contents);
+                    Ok(dynamic_response(req_etag, "image/x-icon", Some(hash), contents))
+                }
+                path if path.starts_with("/web") => {
+                    let (content_type, contents) = read_web_file(path)?;
+                    let hash = Sha256Hash::hash_bytes(&contents);
+                    Ok(dynamic_response(req_etag, content_type, Some(hash), contents))
+                }
+                _ => {
+                    Ok(web::HttpResponse::NotFound()
+                        .content_type("application/json")
+                        .json(ErrorResponse::from("Not found")))
+                }
+            }
+        })
+    }
+
+    fn static_response(req_etag: Option<Sha256Hash>, content_type: &str, etag: Option<Sha256Hash>, data: &'static [u8]) -> web::HttpResponse {
+        if req_etag.is_some() && req_etag == etag {
+            web::HttpResponse::NotModified().into()
+        } else {
+            if let Some(etag) = etag {
+                web::HttpResponse::Ok()
+                .content_type(content_type)
+                .header("Cache-Control", "private, max-age=3600")
+                .header("ETag", format!("\"{}\"", etag))
+                .body(data)
+            } else {
+                web::HttpResponse::Ok()
+                .content_type(content_type)
+                .body(data)
+            }
+        }
+    }
+
+    fn dynamic_response(req_etag: Option<Sha256Hash>,content_type: &str, etag: Option<Sha256Hash>, data: Vec<u8>) -> web::HttpResponse {
+        if req_etag.is_some() && req_etag == etag {
+            web::HttpResponse::NotModified().into()
+        } else {
+            if let Some(etag) = etag {
+                web::HttpResponse::Ok()
+                .content_type(content_type)
+                .header("Cache-Control", "private, max-age=3600")
+                .header("ETag", format!("\"{}\"", etag))
+                .body(data)
+            } else {
+                web::HttpResponse::Ok()
+                .content_type(content_type)
+                .body(data)
+            }
+        }
+    }
+
+    /// In development mode, read the web files from the filesystem instead of statically compiling them into the binary.
+    fn read_web_file(path: &str) -> Result<(&'static str, Vec<u8>), failure::Error> {
+        let current_dir = std::env::current_dir()?;
+        let webdir = current_dir.join("web");
+        let filename = current_dir.join(Path::new(path.trim_start_matches('/'))).canonicalize()?;
+        let _ = filename.strip_prefix(webdir)?;
+
+        let content_type = filename.extension().and_then(|ext|
+            if ext == "js" {
+                Some("text/javascript; charset=utf-8")
+            } else if ext == "css" {
+                Some("text/css; charset=utf-8")
+            } else {
+                None
+            }
+        );
+        let contents = std::fs::read(filename)?;
+        Ok((content_type.unwrap_or("application/octet-stream"), contents))
     }
 
     pub fn app_get() -> impl Responder {
