@@ -78,8 +78,8 @@
         "signature": "9e4ff472cfc91ee3787c8d768800a1579ca8aa6f8dea7b1030b102dfa1db17d2"
       },
       "./websrc/components/VirtualGrid.ts": {
-        "version": "71f31136355a20266579f1b40e4829ef2c8f48ff29beb26634adf70de44964f4",
-        "signature": "92d4a9f630e9d36476ac9aaaff7a85fbfae8155a804729772cf7b7abeef059e4"
+        "version": "ea3a566f0d5ed24df8f631c9ab6151226e5bd799d0c2c38f3c4ba4298fccc6ae",
+        "signature": "865cdc473ffaf7ed9007f3ce94f418b9f0cd621f0a539fc7c1ff371863e3f8e6"
       },
       "./websrc/pages/Page.ts": {
         "version": "ca090a5cc0cc5410a7096ee9da4b17161a5520cfecc9d3711df46c0b8ffeaabc",
@@ -89,17 +89,17 @@
         "version": "83b3dbb6a4b331fde261ce9ef2621273c82484f2128277c12a0af0eccf559a4d",
         "signature": "ba686b9a07a190c9031f81ac660ae727c442dce571bdaf41679404b9e157349d"
       },
+      "./websrc/components/Header.ts": {
+        "version": "cc9c4180679976fe9f8e396c6e5e1844f0100093b52260a50457917c7d62d63f",
+        "signature": "863b9caace17a1e3a2ca35757aae2ba0d7d32faee28bac632a5d067b578ce13e"
+      },
       "./websrc/pages/Gallery.ts": {
-        "version": "53062656c7122afd2738b8abfc492673c6b219cd5011b340a867fdc1b65b66d7",
-        "signature": "1a86c79aab940e89aa3c522bb2eed7dcbf70b774423afa20b2a003e6cc5d5691"
+        "version": "435dff55fdbff5de63968d1107b8481dfc05e110654437ae2affd6ddf361185c",
+        "signature": "74e5ef92f83fe01cca35e36283852da0add42df5efcd990ba0a4626f74a0704b"
       },
       "./websrc/app.ts": {
         "version": "dfc9934af491503158f32517d8937dae5f44df4e3e4684185b757cbf4adb3773",
         "signature": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
-      },
-      "./websrc/components/Header.ts": {
-        "version": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        "signature": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
       }
     },
     "options": {
@@ -118,11 +118,15 @@
         "./websrc/util/Position.ts",
         "./websrc/util/Cache.ts"
       ],
+      "./websrc/components/Header.ts": [
+        "./websrc/components/Custom.ts"
+      ],
       "./websrc/pages/Gallery.ts": [
         "./websrc/pages/Page.ts",
         "./websrc/util/AjaxRequest.ts",
         "./websrc/components/VirtualGrid.ts",
-        "./websrc/util/Position.ts"
+        "./websrc/util/Position.ts",
+        "./websrc/components/Header.ts"
       ],
       "./websrc/app.ts": [
         "./websrc/components/VirtualGrid.ts",
@@ -134,6 +138,7 @@
     "exportedModulesMap": {
       "./websrc/pages/Gallery.ts": [
         "./websrc/components/VirtualGrid.ts",
+        "./websrc/components/Header.ts",
         "./websrc/pages/Page.ts"
       ]
     },
@@ -157,12 +162,12 @@
       "./websrc/components/Custom.ts",
       "./websrc/util/Position.ts",
       "./websrc/util/Cache.ts",
+      "./websrc/components/VirtualGrid.ts",
       "./websrc/pages/Page.ts",
       "./websrc/util/AjaxRequest.ts",
-      "./websrc/pages/Gallery.ts",
-      "./websrc/app.ts",
       "./websrc/components/Header.ts",
-      "./websrc/components/VirtualGrid.ts"
+      "./websrc/app.ts",
+      "./websrc/pages/Gallery.ts"
     ]
   },
   "version": "3.6.3"

@@ -94,9 +94,12 @@ export class VirtualGrid extends HTMLElement {
         let cellWidth = this.cellWidth;
         let cellHeight = this.cellHeight;
 
+        let visibleGridTop = Math.max(0, Math.floor(scrollTop / cellHeight) );
+        let visibleGridBottom = Math.min(this.gridRowCount, Math.ceil(scrollBottom / cellHeight));
+
         // create elements for the current page as well as the one before and after
-        let gridTop = Math.max(0, Math.floor(scrollTop / cellHeight) - this.visibleGridHeight);
-        let gridBottom = Math.min(this.gridRowCount, Math.ceil(scrollBottom / cellHeight) + this.visibleGridHeight);
+        let gridTop = Math.max(0, visibleGridTop - this.visibleGridHeight);
+        let gridBottom = Math.min(this.gridRowCount, visibleGridBottom + this.visibleGridHeight);
 
         let horizontalPadding = Math.max(0, (rect.width - cellWidth * this.visibleGridWidth) / (this.visibleGridWidth + 1));
 
@@ -137,6 +140,18 @@ export class VirtualGrid extends HTMLElement {
                 Position.absolute(cell).top(top + 'px').left(left + 'px').width(cellWidth + 'px').height(cellHeight + 'px');
             });
         }
+
+        // notify parent
+        let firstIndex = Math.max(0, Math.min(this.virtualElementCount - 1, visibleGridTop * this.visibleGridWidth));
+        let lastIndex = Math.max(0, Math.min(this.virtualElementCount - 1, visibleGridBottom * this.visibleGridWidth - 1));
+        this.dispatchEvent(new CustomEvent<ViewportChangedEventData>('viewportchanged', {
+            detail: {
+                gridTopRow: visibleGridTop,
+                gridBottomRow: visibleGridBottom,
+                firstVirtualIndex: firstIndex,
+                lastVirtualIndex: lastIndex,
+            }
+        }));
     }
 
     private getCell(): HTMLElement {
@@ -236,6 +251,13 @@ export class VirtualGrid extends HTMLElement {
         return document.createElement('virtual-grid') as VirtualGrid;
     }
 }
+
+export type ViewportChangedEventData = {
+    gridTopRow: number,
+    gridBottomRow: number,
+    firstVirtualIndex: number,
+    lastVirtualIndex: number,
+};
 
 export interface VirtualGridRenderer {
     /// Create the HTMLElement that is used for rendering items.
