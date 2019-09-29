@@ -1,7 +1,9 @@
-.PHONY: typescript web
+.PHONY: all typescript web cli
 
-# TS_SRC = $(shell find web/ -type f -name '*.ts')
-# JS_SRC = $(patsubst web/%.ts, web/%.js, $(TS_SRC))
+all: cli
+
+cli: web
+	cargo build --release
 
 web: typescript web/index.html web/favicon.ico
 	browserify --entry web/app.js --outfile web/viewer.js
