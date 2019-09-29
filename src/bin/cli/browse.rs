@@ -4,33 +4,23 @@ use crate::cli;
 use actix_web::{web, App, HttpServer};
 use log::info;
 use photo_archive::library::{LibraryFiles, PhotoDatabase};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 #[derive(Clone)]
 pub struct WebData {
     photo_db: Arc<Mutex<PhotoDatabase>>,
-    root_dir: PathBuf,
+    photo_root: PathBuf,
+    web_root: Option<PathBuf>,
 }
 
 impl WebData {
-    pub fn new(root_dir: PathBuf, db: PhotoDatabase) -> Self {
-        Self {
-            photo_db: Arc::new(Mutex::new(db)),
-            root_dir,
-        }
-    }
-
     pub fn lock_photo_db(&self) -> MutexGuard<PhotoDatabase> {
         if let Ok(guard) = self.photo_db.lock() {
             guard
         } else {
             panic!("Photo database mutex was poisoned")
         }
-    }
-
-    pub fn root_dir(&self) -> &Path {
-        &self.root_dir
     }
 }
 
@@ -39,17 +29,20 @@ pub fn browse(
     _context: &mut cli::AppContext,
     library: &LibraryFiles,
     binds: &[String],
+    web_root: Option<PathBuf>,
 ) -> Result<(), failure::Error> {
-    let data = WebData::new(
-        library.root_dir.to_path_buf(),
-        PhotoDatabase::open_or_create(&library.photo_db_file)?,
-    );
+    let data = WebData {
+        photo_root: library.root_dir.to_path_buf(),
+        photo_db: Arc::new(Mutex::new(PhotoDatabase::open_or_create(&library.photo_db_file)?)),
+        web_root: web_root,
+    };
 
     info!("Starting web server");
 
     let factory = HttpServer::new(move || {
         App::new()
             .data(data.clone())
+            // REST API:
             .service(web::resource("/photos").route(web::get().to(handlers::photos_get)))
             .service(web::resource("/photos/{id}").route(web::get().to(handlers::photo_get)))
             .service(
@@ -60,8 +53,8 @@ pub fn browse(
                 web::resource("/photos/{id}/original")
                     .route(web::get().to(handlers::photo_original_get)),
             )
-            .service(web::resource("/").route(web::get().to(handlers::app_get)))
-            .default_service(web::to(handlers::builtin_file_get))
+            // Frontend:
+            .default_service(web::to(handlers::static_file_handler))
     });
     let factory = binds.iter().fold(Ok(factory), |factory, address| factory?.bind(address))?;
     factory.run()?;
@@ -77,6 +70,8 @@ mod handlers {
     use photo_archive::library::{PhotoId, PhotoPath};
     use serde::Serialize;
     use std::path::Path;
+    use lazy_static::lazy_static;
+    use std::collections::HashMap;
 
     use super::WebData;
 
@@ -105,82 +100,60 @@ mod handlers {
         created: Option<chrono::DateTime<chrono::Utc>>,
     }
 
-    // static APP_HTML: &'static [u8] = include_bytes!("../../../web/index.html");
-
-    pub fn develop_get(req: web::HttpRequest) -> impl Responder {
-        error_handler(|| {
-            let current_dir = std::env::current_dir()?;
-            let webdir = current_dir.join("web");
-            let filename = current_dir
-                .join(Path::new(req.path().trim_start_matches('/')))
-                .canonicalize()?;
-            let _ = filename.strip_prefix(webdir)?;
-
-            let content_type = filename.extension().and_then(|ext| {
-                if ext == "js" {
-                    Some("text/javascript; charset=utf-8")
-                } else if ext == "css" {
-                    Some("text/css; charset=utf-8")
-                } else {
-                    None
-                }
-            });
-            let contents = std::fs::read(filename)?;
-
-            Ok(web::HttpResponse::Ok()
-                .content_type(content_type.unwrap_or("application/octet-stream"))
-                .body(contents))
-        })
+    /// A static file that is served by the builtin webserver.
+    struct StaticResource {
+        content_type: &'static str,
+        contents: &'static [u8],
+        /// The hash is used as ETag.
+        hash: Sha256Hash,
     }
 
-    pub fn builtin_file_get(req: web::HttpRequest) -> impl Responder {
-        error_handler(|| {
-            let req_etag = get_if_none_match_sha256(&req);
-            match req.path() {
-                "/favicon.ico" => {
-                    // Ok(static_response(req_etag, "image/x-icon", None, include_bytes!("../../../web/favicon.ico")))
-                    let (content_type, contents) = read_web_file("/web/favicon.ico")?;
-                    let hash = Sha256Hash::hash_bytes(&contents);
-                    Ok(dynamic_response(
-                        req_etag,
-                        "image/x-icon",
-                        Some(hash),
-                        contents,
-                    ))
+    macro_rules! static_resource {
+        ($content_type: expr, $path:expr) => {
+            {
+                let contents: &'static [u8] = include_bytes!($path);
+                StaticResource {
+                    content_type: $content_type,
+                    contents: contents,
+                    hash: Sha256Hash::hash_bytes(contents),
                 }
-                path if path.starts_with("/web") => {
-                    let (content_type, contents) = read_web_file(path)?;
-                    let hash = Sha256Hash::hash_bytes(&contents);
-                    Ok(dynamic_response(
-                        req_etag,
-                        content_type,
-                        Some(hash),
-                        contents,
-                    ))
-                }
-                _ => Ok(web::HttpResponse::NotFound()
-                    .content_type("application/json")
-                    .json(ErrorResponse::from("Not found"))),
             }
-        })
+        };
+    }
+
+    lazy_static!{
+        static ref STATIC_RESOURCES: HashMap<&'static str, StaticResource> = {
+            let mut resources = HashMap::new();
+            resources.insert("/web/favicon.ico",
+                static_resource!("image/x-icon", "../../../web/favicon.ico"));
+            resources.insert("/web/favicon.png",
+                static_resource!("image/png", "../../../web/favicon.png"));
+            resources.insert("/web/index.html",
+                static_resource!("text/html; charset=utf-8", "../../../web/index.html"));
+            resources.insert("/web/viewer.js",
+                static_resource!("text/javascript; charset=utf-8", "../../../web/viewer.js"));
+            resources
+        };
     }
 
     fn static_response(
         req_etag: Option<Sha256Hash>,
         content_type: &str,
         etag: Option<Sha256Hash>,
-        data: &'static [u8],
+        data: web::Bytes,
     ) -> web::HttpResponse {
         if req_etag.is_some() && req_etag == etag {
             web::HttpResponse::NotModified().into()
         } else {
             if let Some(etag) = etag {
+                // If the resource has an etag, send caching headers as well
                 web::HttpResponse::Ok()
                     .content_type(content_type)
                     .header("Cache-Control", "private, max-age=3600")
                     .header("ETag", format!("\"{}\"", etag))
                     .body(data)
             } else {
+                // Otherwise only send the data
                 web::HttpResponse::Ok()
                     .content_type(content_type)
                     .body(data)
@@ -188,55 +161,33 @@ mod handlers {
         }
     }
 
-    fn dynamic_response(
-        req_etag: Option<Sha256Hash>,
-        content_type: &str,
-        etag: Option<Sha256Hash>,
-        data: Vec<u8>,
-    ) -> web::HttpResponse {
-        if req_etag.is_some() && req_etag == etag {
-            web::HttpResponse::NotModified().into()
-        } else {
-            if let Some(etag) = etag {
-                web::HttpResponse::Ok()
-                    .content_type(content_type)
-                    .header("Cache-Control", "private, max-age=3600")
-                    .header("ETag", format!("\"{}\"", etag))
-                    .body(data)
+    pub fn static_file_handler(data: web::Data<WebData>, request: web::HttpRequest) -> impl Responder {
+        error_handler(|| {
+            let request_etag = get_if_none_match_sha256(&request);
+            let rewritten_path = match request.path() {
+                "/" => "/web/index.html",
+                "/favicon.ico" => "/web/favicon.ico",
+                path => path,
+            };
+            if let Some(resource) = STATIC_RESOURCES.get(rewritten_path) {
+                let (hash, contents) = if let Some(ref web_root) = data.web_root {
+                    // At this point, we have established that the path is a valid static resource,
+                    // and that it starts with `/web/` (otherwise there would be no matching entry in the hashmap).
+                    let filename = web_root.join(Path::new(rewritten_path.trim_start_matches("/web/")));
+                    let contents = std::fs::read(&filename)?;
+                    let hash = Sha256Hash::hash_bytes(&contents);
+                    (hash, contents.into())
+                } else {
+                    // use the builtin resources
+                    (resource.hash.clone(), resource.contents.into())
+                };
+                Ok(static_response(request_etag, resource.content_type, Some(hash), contents))
             } else {
-                web::HttpResponse::Ok()
-                    .content_type(content_type)
-                    .body(data)
+                Ok(web::HttpResponse::NotFound()
+                    .content_type("application/json")
+                    .json(ErrorResponse::from("Not found")))
             }
-        }
-    }
-
-    /// In development mode, read the web files from the filesystem instead of statically compiling them into the binary.
-    fn read_web_file(path: &str) -> Result<(&'static str, Vec<u8>), failure::Error> {
-        let current_dir = std::env::current_dir()?;
-        let webdir = current_dir.join("web");
-        let filename = current_dir
-            .join(Path::new(path.trim_start_matches('/')))
-            .canonicalize()?;
-        let _ = filename.strip_prefix(webdir)?;
-
-        let content_type = filename.extension().and_then(|ext| {
-            if ext == "js" {
-                Some("text/javascript; charset=utf-8")
-            } else if ext == "css" {
-                Some("text/css; charset=utf-8")
-            } else {
-                None
-            }
-        });
-        let contents = std::fs::read(filename)?;
-        Ok((content_type.unwrap_or("application/octet-stream"), contents))
-    }
-
-    pub fn app_get() -> impl Responder {
-        web::HttpResponse::Ok()
-            .content_type("text/html; charset=utf-8")
-            .body(std::fs::read("web/index.html").unwrap())
+        })
     }
 
     pub fn photos_get(data: web::Data<WebData>) -> impl Responder {
@@ -296,7 +247,7 @@ mod handlers {
                         return Ok(web::HttpResponse::NotModified().into());
                     }
                     // otherwise load the image file
-                    let path = PhotoPath::from_relative(data.root_dir(), &photo.relative_path);
+                    let path = PhotoPath::from_relative(&data.photo_root, &photo.relative_path);
                     let data = std::fs::read(path.full_path)?;
                     Some((data, photo.info.file_hash, "image/jpeg"))
                 } else {

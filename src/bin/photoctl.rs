@@ -54,6 +54,14 @@ enum Command {
         /// On which addresses the web server should listen.
         #[structopt(short, long, default_value = "localhost:8076")]
         bind: Vec<String>,
+
+        /// The source path from where the web frontend is hosted.
+        ///
+        /// If it is not specified, the resources that where compiled into photoctl are used.
+        /// This option is mainly useful for development, because it allows working on the
+        /// frontend without recompiling the Rust part of the application.
+        #[structopt(short, long, parse(from_os_str))]
+        web_root: Option<PathBuf>,
     },
 }
 
@@ -127,8 +135,8 @@ fn run(opts: GlobalOpts, context: &mut cli::AppContext) -> Result<(), failure::E
         library_files.root_dir.to_string_lossy()
     );
 
-    match &opts.command {
-        Command::Init { overwrite } => cli::init(&library_files, *overwrite),
+    match opts.command {
+        Command::Init { overwrite } => cli::init(&library_files, overwrite),
         Command::Status => cli::status(&library_files),
         Command::Photos { command } => match command {
             PhotosCommand::List => cli::photos::list(context, &library_files),
@@ -155,24 +163,24 @@ fn run(opts: GlobalOpts, context: &mut cli::AppContext) -> Result<(), failure::E
                     )
                     .into());
                 }
-                cli::photos::scan(context, &library_files, *rescan, &paths_to_scan)
+                cli::photos::scan(context, &library_files, rescan, &paths_to_scan)
             }
         },
         Command::Thumbnails { command } => match command {
             ThumbnailsCommand::Generate {
                 regenerate,
                 retry_failed,
-            } => cli::thumbs::generate(context, &library_files, *regenerate, *retry_failed),
+            } => cli::thumbs::generate(context, &library_files, regenerate, retry_failed),
             ThumbnailsCommand::Delete => cli::thumbs::delete(context, &library_files),
         },
         Command::Completion { shell } => {
             GlobalOpts::clap().gen_completions_to(
                 "photoctl",
-                *shell,
+                shell,
                 &mut std::io::stdout().lock(),
             );
             Ok(())
         }
-        Command::Browse { bind } => cli::browse::browse(context, &library_files, bind),
+        Command::Browse { bind, web_root } => cli::browse::browse(context, &library_files, &bind, web_root),
     }
 }

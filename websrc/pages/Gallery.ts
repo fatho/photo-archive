@@ -44,7 +44,7 @@ export class GalleryPage implements Page {
                 let timestamp = new Date(created);
                 startTimestamp = timestamp.toLocaleString('de-DE')
             }
-            that.header.pageHeader = `${startTimestamp} (${e.detail.firstVirtualIndex} of ${that.photos.length})`;
+            that.header.pageHeader = `${startTimestamp} (${e.detail.firstVirtualIndex + 1} of ${that.photos.length})`;
         } as EventListener);
 
         this.photos = new Array();

@@ -77,7 +77,7 @@ const HeaderStyle: string = `
 const HeaderTemplate: string = `
 <header class="main-header">
     <div class="logo"><img src="/web/favicon.png" alt="Logo" height="32"></img></div>
-    <div><span class="appName">Photo Archive v0.1</span></div>
+    <div><span class="appName">Photo Archive v0.2</span></div>
     <div class="filler"></div>
     <div><span id="pageHeader"></span></div>
     <div class="filler"></div>
