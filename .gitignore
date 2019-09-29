@@ -1,2 +1,11 @@
 /target
 **/*.rs.bk
+
+# web build directory
+/web
+tsconfig.tsbuildinfo
+
+# Profiling
+perf.data
+perf.data.old
+flame.svg

@@ -1,7 +1,9 @@
+use log::debug;
+use std::io;
+use std::path::Path;
 
-
-
-/// Taken from https://gtk-rs.org/tuto/closures for easily using widget reference in event handler closures.
+/// Taken from https://gtk-rs.org/tuto/closures for easily cloning everything that is moved into a closure.
+#[macro_export]
 macro_rules! clone {
     (@param _) => ( _ );
     (@param $x:ident) => ( $x );
@@ -19,7 +21,6 @@ macro_rules! clone {
     );
 }
 
-
 #[derive(Debug, Clone)]
 pub struct Point {
     pub x: f64,
@@ -29,7 +30,7 @@ pub struct Point {
 #[derive(Debug, Clone)]
 pub struct Size {
     pub w: f64,
-    pub h: f64
+    pub h: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -85,4 +86,27 @@ impl Rect {
             size: size.clone(),
         }
     }
+}
+
+/// Create a backup of a file, appending `<NUM>.bak` to the while
+/// with `<NUM>` being the smallest number such that the resulting file name doesn't exist.
+pub fn backup_file(file_path: &Path, rename: bool) -> Result<(), io::Error> {
+    for bak_num in 0..10 {
+        let mut name = file_path.file_name().unwrap().to_os_string();
+        name.push(format!(".{}.bak", bak_num));
+        let bak_file = file_path.with_file_name(&name);
+
+        if bak_file.exists() {
+            debug!("Backup {} already exists", bak_file.to_string_lossy());
+        } else {
+            debug!("Backup name available {}", bak_file.to_string_lossy());
+            let result = if rename {
+                std::fs::rename(file_path, &bak_file)
+            } else {
+                std::fs::copy(file_path, &bak_file).map(|_| ())
+            };
+            return result;
+        }
+    }
+    Err(io::Error::new(io::ErrorKind::Other, "Too many backups"))
 }

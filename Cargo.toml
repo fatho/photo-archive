@@ -5,27 +5,39 @@ authors = ["Fabian Thorand <f.thorand@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-bit-set = "0.5.0"
-chrono = "0.4.6"
-directories = "1.0.2"
-lru = "0.1.11"
-num-derive = "0.2"
+bit-set = "0.5.1"
+chrono = { version = "0.4.9", features = ["serde"] }
+directories = "2.0.2"
+lru = "0.2.0"
+num-derive = "0.3.0"
 num-traits = "0.2"
-walkdir = "2.2.7"
-rusqlite = "0.16.0"
+walkdir = "2.2.9"
+rusqlite = "0.20.0"
+structopt = "0.3.2"
+failure = "0.1.5"
+console = "0.9.0"
+indicatif = "0.12.0"
+dialoguer = "0.4.0"
+ctrlc = "3.1.3"
+sha2 = "0.8"
+num_cpus = "1.10.1"
+rayon = "1.2.0"
+actix-web = "1.0.8"
+actix = "0.8.3"
+serde = "1.0.101"
+serde_derive = "1.0.101"
+hex = "0.4.0"
 
-cairo-rs = "0.5.0"
-gdk = "0.9.0"
-gdk-pixbuf = "0.5.0"
-glib = "0.6.1"
-gtk = "0.5.0"
-gio = "0.5.1"
-
-image = "0.21.0"
 kamadak-exif = "0.3.1"
 
-log = "0.4.6"
-env_logger = "0.6.0"
+log = {version = "0.4.8", features = ["std"] }
 
-[features]
-default = ["gtk/v3_10"]
+[dependencies.image]
+version = "0.22.2"
+default-features = false
+features = ["jpeg"]
+
+[profile.release]
+# Embed debug information even in release builds
+# so that we can get meaningful profiles.
+debug = true
