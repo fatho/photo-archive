@@ -3,6 +3,7 @@
 
 # web build directory
 /web
+tsconfig.tsbuildinfo
 
 # Profiling
 perf.data
