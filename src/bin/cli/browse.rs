@@ -66,7 +66,7 @@ pub fn browse(
             .service(
                 web::resource("/").route(web::get().to(handlers::app_get)),
             )
-            .default_service(web::to(web::HttpResponse::NotFound))
+            .default_service(web::to(handlers::develop_get))
     })
     .bind(&address)?
     .run()?;
@@ -81,6 +81,7 @@ mod handlers {
     use photo_archive::formats::Sha256Hash;
     use serde::Serialize;
     use failure::format_err;
+    use std::path::Path;
 
     use super::WebData;
 
@@ -110,6 +111,30 @@ mod handlers {
     }
 
     // static APP_HTML: &'static [u8] = include_bytes!("../../../web/index.html");
+
+    pub fn develop_get(req: web::HttpRequest) -> impl Responder {
+        error_handler(|| {
+            let current_dir = std::env::current_dir()?;
+            let webdir = current_dir.join("web");
+            let filename = current_dir.join(Path::new(req.path().trim_start_matches('/'))).canonicalize()?;
+            let _ = filename.strip_prefix(webdir)?;
+
+            let content_type = filename.extension().and_then(|ext|
+                if ext == "js" {
+                    Some("text/javascript; charset=utf-8")
+                } else if ext == "css" {
+                    Some("text/css; charset=utf-8")
+                } else {
+                    None
+                }
+            );
+            let contents = std::fs::read(filename)?;
+
+            Ok(web::HttpResponse::Ok()
+                .content_type(content_type.unwrap_or("application/octet-stream"))
+                .body(contents))
+        })
+    }
 
     pub fn app_get() -> impl Responder {
         web::HttpResponse::Ok()

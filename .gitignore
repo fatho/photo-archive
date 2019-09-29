@@ -1,6 +1,8 @@
 /target
 **/*.rs.bk
 
+# web build directory
+/web
 
 # Profiling
 perf.data
