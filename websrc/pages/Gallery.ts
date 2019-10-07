@@ -107,6 +107,7 @@ class GalleryItemRenderer implements VirtualGridRenderer {
         cell.style.backgroundSize = 'fill';
         cell.style.backgroundPosition = 'center';
         cell.style.backgroundRepeat = 'no-repeat';
+        cell.style.backgroundSize = 'contain';
         return cell;
     }
 
