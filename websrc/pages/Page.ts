@@ -1,7 +1,5 @@
 export interface Page {
-    render(root: HTMLElement): void;
+    attach(root: HTMLElement): void;
 
-    enter(): void;
-
-    leave(): void;
+    detach(root: HTMLElement): void;
 }

@@ -50,14 +50,12 @@ export class GalleryPage implements Page {
         this.photos = new Array();
     }
 
-    enter(): void {
+    requestPhotos(): void {
         Request.get('/photos')
             .onSuccess(r => this.receivePhotos(r.json()))
             .onFailure(r => this.failedPhotos(r.text()))
             .send();
     }
-
-    leave(): void {}
 
     failedPhotos(message: string) {
         console.log(message);
@@ -81,8 +79,12 @@ export class GalleryPage implements Page {
         this.imageGrid.invalidateAllItems(true);
     }
 
-    render(root: HTMLElement): void {
+    attach(root: HTMLElement): void {
         root.appendChild(this.flexContainer);
+    }
+
+    detach(root: HTMLElement): void {
+        root.removeChild(this.flexContainer);
     }
 }
 

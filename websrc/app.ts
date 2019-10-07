@@ -1,26 +1,52 @@
-import { VirtualGrid } from "./components/VirtualGrid"
 import { Page } from "./pages/Page";
 import { GalleryPage } from "./pages/Gallery";
-import { Lru } from "./util/Cache";
+import { HashRouter, RouteParam } from "./routing/HashRouter";
 
 class App {
-    current_page: Page;
-    root_id: string;
+    private current_page: Page | null;
+    private root_id: string;
 
     constructor(root_id: string) {
-        this.current_page = new GalleryPage();
-        this.current_page.enter();
+        this.current_page = null;
         this.root_id = root_id;
     }
 
-    render() {
+    goto(page: Page) {
         let root = document.getElementById(this.root_id) as HTMLElement;
-        this.current_page.render(root);
+        if (page != this.current_page) {
+            if (this.current_page != null) {
+                this.current_page.detach(root);
+            }
+            if(page != null) {
+                page.attach(root);
+            }
+            this.current_page = page;
+        }
     }
 }
 
 let app = new App('root');
 
+class Pages {
+    static gallery: GalleryPage = new GalleryPage();
+}
+
+let router = new HashRouter();
+
+router.addRoute(['gallery'], () => {
+    Pages.gallery.requestPhotos();
+    app.goto(Pages.gallery);
+});
+
+router.addRoute(['slideshow', RouteParam.int()], (id: number) => {
+    console.log("slideshow %d", id);
+    app.goto(Pages.gallery);
+});
+
 window.onload = () => {
-    app.render();
+    if (router.hasRoute()) {
+        router.route();
+    } else {
+        router.navigate(["gallery"]);
+    }
 }
