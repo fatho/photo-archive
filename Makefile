@@ -1,12 +1,21 @@
-.PHONY: all typescript web cli
+.PHONY: all web cli
+
+TYPESRCIPT_SRC = $(shell find websrc/ -type f -name '*.ts')
+
+WEB_DIST = web/viewer.js web/index.html web/favicon.ico web/favicon.png
 
 all: cli
 
-cli: web
+cli: ${WEB_DIST}
 	cargo build --release
 
-web: typescript web/index.html web/favicon.ico
-	browserify --entry web/app.js --outfile web/viewer.js
+web: ${WEB_DIST}
+
+web/viewer.js: web/app.js
+	browserify --entry $< --outfile $@
+
+web/app.js: ${TYPESRCIPT_SRC}
+	tsc --build tsconfig.json
 
 web/favicon.ico: web/favicon.png
 	convert $< $@
@@ -16,6 +25,3 @@ web/favicon.png: websrc/favicon.svg
 
 web/index.html: websrc/index.html
 	cp $< $@
-
-typescript:
-	tsc --build tsconfig.json
