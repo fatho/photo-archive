@@ -37,6 +37,11 @@ class Pages {
     static slideshow: SldeshowPage = new SldeshowPage(state, router);
 }
 
+router.addRoute(['gallery', RouteParam.int()], (scrollPhotoId: number) => {
+    app.goto(Pages.gallery);
+    Pages.gallery.scrollToPhoto(scrollPhotoId);
+});
+
 router.addRoute(['gallery'], () => {
     app.goto(Pages.gallery);
 });

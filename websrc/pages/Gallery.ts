@@ -2,7 +2,7 @@ import { Page } from "./Page";
 import { VirtualGrid, VirtualGridRenderer, ViewportChangedEventData } from "../components/VirtualGrid";
 import { Position } from "../util/Position";
 import { Header } from "../components/Header";
-import { AppState, StateChangedListener } from "../State";
+import { AppState, StateChangedListener, Photo } from "../State";
 import { HashRouter } from "../routing/HashRouter";
 
 export class GalleryPage implements Page, StateChangedListener {
@@ -59,6 +59,13 @@ export class GalleryPage implements Page, StateChangedListener {
         document.title = `Photo Archive`
     }
 
+    scrollToPhoto(photoId: number): void {
+        let targetIndex = this.state.photos.findIndex((photo: Photo) => photo.id == photoId);
+        if(targetIndex >= 0) {
+            this.imageGrid.scrollToIndex(targetIndex);
+        }
+    }
+
     photosChanged(): void {
         console.log("GalleryPage: photos changed");
         this.refreshView();
@@ -100,6 +107,8 @@ class GalleryItemRenderer implements VirtualGridRenderer {
             let photo = page.state.photos[index];
             element.style.backgroundImage = `url("/photos/${photo.id}/thumbnail")`;
             element.onclick = () => {
+                // This allows us to return back to the current position when the slideshow is exited:
+                page.router.replaceHistoryEntry(['gallery', photo.id.toString()]);
                 page.router.navigate(['slideshow', index.toString()]);
             };
         }

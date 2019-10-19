@@ -165,6 +165,12 @@ export class VirtualGrid extends HTMLElement {
         }
     }
 
+    scrollToIndex(index: number): void {
+        let rowIndex = Math.floor(index / this.visibleGridWidth);
+        let rowOffset = rowIndex * this.cellHeight;
+        this.viewport.scrollTo(0, rowOffset);
+    }
+
     invalidateAllItems(redraw: boolean): void {
         this.elementCache.forEach((key, value) => {
             this.viewport.removeChild(value);

@@ -16,10 +16,15 @@ export class HashRouter {
 
     navigate(path: string[], replace: boolean = false) {
         if(replace) {
-            location.replace(`#${path.join('/')}`);
+            window.location.replace(`#${path.join('/')}`);
         } else {
             window.location.hash = path.join('/');
         }
+    }
+
+    /// Set the current path in the history without doing a navigation action.
+    replaceHistoryEntry(path: string[]) {
+        window.history.replaceState(null, '', `#${path.join('/')}`);
     }
 
     /// Apply the routing logic to the currently set path.
