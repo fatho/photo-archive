@@ -3,14 +3,17 @@ import { Request } from "../util/AjaxRequest";
 import { VirtualGrid, VirtualGridRenderer, ViewportChangedEventData } from "../components/VirtualGrid";
 import { Position } from "../util/Position";
 import { Header } from "../components/Header";
+import { AppState, StateChangedListener } from "../State";
 
-export class GalleryPage implements Page {
-    flexContainer: HTMLElement;
-    imageGrid: VirtualGrid;
-    header: Header;
-    photos: Photo[];
+export class GalleryPage implements Page, StateChangedListener {
+    private flexContainer: HTMLElement;
+    private imageGrid: VirtualGrid;
+    private header: Header;
+    state: AppState;
 
-    constructor() {
+    constructor(state: AppState) {
+        this.state = state;
+
         // setup flexbox layout
         this.flexContainer = document.createElement('div');
         // make the flex container fill all of its parent
@@ -34,65 +37,42 @@ export class GalleryPage implements Page {
         this.imageGrid.itemRenderer = new GalleryItemRenderer(this);
         let that = this;
         this.imageGrid.addEventListener('viewportchanged', function(this: HTMLElement, e: CustomEvent<ViewportChangedEventData>) {
-            if (e.detail.firstVirtualIndex >= that.photos.length) {
+            if (e.detail.firstVirtualIndex >= that.state.photos.length) {
                 return;
             }
 
-            let created = that.photos[e.detail.firstVirtualIndex].created;
+            let created = that.state.photos[e.detail.firstVirtualIndex].created;
             let startTimestamp = "unknown date";
             if (created) {
                 let timestamp = new Date(created);
                 startTimestamp = timestamp.toLocaleString('de-DE')
             }
-            that.header.pageHeader = `${startTimestamp} (${e.detail.firstVirtualIndex + 1} of ${that.photos.length})`;
+            that.header.pageHeader = `${startTimestamp} (${e.detail.firstVirtualIndex + 1} of ${that.state.photos.length})`;
         } as EventListener);
-
-        this.photos = new Array();
     }
 
-    requestPhotos(): void {
-        Request.get('/photos')
-            .onSuccess(r => this.receivePhotos(r.json()))
-            .onFailure(r => this.failedPhotos(r.text()))
-            .send();
-    }
-
-    failedPhotos(message: string) {
-        console.log(message);
-    }
-
-    receivePhotos(photos: Photo[]) {
-        console.log(photos.length);
-        photos.sort((a, b) => {
-            if ( a.created == null && b.created == null) {
-                return a.id - b.id;
-            } else if (a.created == null) {
-                return 1;
-            } else if (b.created == null) {
-                return -1;
-            } else {
-                return -a.created.localeCompare(b.created);
-            }
-        });
-        this.photos = photos;
-        this.imageGrid.virtualElementCount = this.photos.length;
+    private refreshView() {
+        console.log("view refreshed: %d", this.state.photos.length);
+        this.imageGrid.virtualElementCount = this.state.photos.length;
         this.imageGrid.invalidateAllItems(true);
+    }
+
+    photosChanged(_state: AppState): void {
+        console.log("photos changed");
+        this.refreshView();
     }
 
     attach(root: HTMLElement): void {
         root.appendChild(this.flexContainer);
+        this.state.addPhotosChangedListener(this)
+        this.refreshView();
     }
 
     detach(root: HTMLElement): void {
+        this.state.removePhotosChangedListener(this)
         root.removeChild(this.flexContainer);
     }
 }
-
-type Photo = {
-    id: number,
-    relative_path: string,
-    created: string,
-};
 
 class GalleryItemRenderer implements VirtualGridRenderer {
     page: GalleryPage;
@@ -113,8 +93,8 @@ class GalleryItemRenderer implements VirtualGridRenderer {
 
     assignVirtualizedElement(element: HTMLElement, index: number): void {
         // Look up the photo, and assign the url
-        if ( index < this.page.photos.length ) {
-            let photo = this.page.photos[index];
+        if ( index < this.page.state.photos.length ) {
+            let photo = this.page.state.photos[index];
             element.style.backgroundImage = `url("/photos/${photo.id}/thumbnail")`
         }
     }

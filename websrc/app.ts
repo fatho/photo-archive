@@ -1,6 +1,7 @@
 import { Page } from "./pages/Page";
 import { GalleryPage } from "./pages/Gallery";
 import { HashRouter, RouteParam } from "./routing/HashRouter";
+import { AppState } from "./State";
 
 class App {
     private current_page: Page | null;
@@ -26,15 +27,16 @@ class App {
 }
 
 let app = new App('root');
+let state = new AppState();
+state.requestPhotos();
 
 class Pages {
-    static gallery: GalleryPage = new GalleryPage();
+    static gallery: GalleryPage = new GalleryPage(state);
 }
 
 let router = new HashRouter();
 
 router.addRoute(['gallery'], () => {
-    Pages.gallery.requestPhotos();
     app.goto(Pages.gallery);
 });
 
