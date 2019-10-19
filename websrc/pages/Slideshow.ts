@@ -44,12 +44,16 @@ export class SldeshowPage implements Page, StateChangedListener {
     }
 
     private displayCurrentImage() {
+        let titleSuffix: string;
         if(this._currentIndex >= 0 && this._currentIndex < this.state.photos.length) {
             let photo = this.state.photos[this._currentIndex];
             this._imageContainer.style.backgroundImage = `url("/photos/${photo.id}/original")`
+            titleSuffix = ` (photo #${photo.id})`;
         } else {
             this._imageContainer.style.backgroundImage = '';
+            titleSuffix = "";
         }
+        document.title = `Photo Archive${titleSuffix}`;
     }
 
     public get currentIndex() : number {

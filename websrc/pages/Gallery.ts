@@ -54,9 +54,9 @@ export class GalleryPage implements Page, StateChangedListener {
     }
 
     private refreshView() {
-        console.log("view refreshed: %d", this.state.photos.length);
         this.imageGrid.virtualElementCount = this.state.photos.length;
         this.imageGrid.invalidateAllItems(true);
+        document.title = `Photo Archive`
     }
 
     photosChanged(): void {
