@@ -1,18 +1,20 @@
 import { Page } from "./Page";
-import { Request } from "../util/AjaxRequest";
 import { VirtualGrid, VirtualGridRenderer, ViewportChangedEventData } from "../components/VirtualGrid";
 import { Position } from "../util/Position";
 import { Header } from "../components/Header";
 import { AppState, StateChangedListener } from "../State";
+import { HashRouter } from "../routing/HashRouter";
 
 export class GalleryPage implements Page, StateChangedListener {
     private flexContainer: HTMLElement;
     private imageGrid: VirtualGrid;
     private header: Header;
+    router: HashRouter;
     state: AppState;
 
-    constructor(state: AppState) {
+    constructor(state: AppState, router: HashRouter) {
         this.state = state;
+        this.router = router;
 
         // setup flexbox layout
         this.flexContainer = document.createElement('div');
@@ -57,8 +59,8 @@ export class GalleryPage implements Page, StateChangedListener {
         this.imageGrid.invalidateAllItems(true);
     }
 
-    photosChanged(_state: AppState): void {
-        console.log("photos changed");
+    photosChanged(): void {
+        console.log("GalleryPage: photos changed");
         this.refreshView();
     }
 
@@ -92,10 +94,14 @@ class GalleryItemRenderer implements VirtualGridRenderer {
     }
 
     assignVirtualizedElement(element: HTMLElement, index: number): void {
+        let page = this.page
         // Look up the photo, and assign the url
-        if ( index < this.page.state.photos.length ) {
-            let photo = this.page.state.photos[index];
-            element.style.backgroundImage = `url("/photos/${photo.id}/thumbnail")`
+        if ( index < page.state.photos.length ) {
+            let photo = page.state.photos[index];
+            element.style.backgroundImage = `url("/photos/${photo.id}/thumbnail")`;
+            element.onclick = () => {
+                page.router.navigate(['slideshow', index.toString()]);
+            };
         }
     }
 

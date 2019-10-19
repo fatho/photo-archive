@@ -19,11 +19,12 @@ export class AppState {
         console.log(message);
     }
 
-    private receivePhotos(photos: Photo[]): void {
-        photos.sort(createdOrderNullsLast);
-        this._photos = photos;
+    private receivePhotos(newPhotos: Photo[]): void {
+        newPhotos.sort(createdOrderNullsLast);
+        let oldPhotos = this._photos;
+        this._photos = newPhotos;
 
-        this._photosChanged.forEach((handler) => handler.photosChanged(this));
+        this._photosChanged.forEach((handler) => handler.photosChanged(this, oldPhotos, newPhotos));
     }
 
     addPhotosChangedListener(listener: StateChangedListener): void {
@@ -36,7 +37,7 @@ export class AppState {
 }
 
 export interface StateChangedListener {
-    photosChanged(state: AppState): void;
+    photosChanged(state: AppState, oldPhotos: Photo[], newPhotos: Photo[]): void;
 }
 
 export type Photo = {

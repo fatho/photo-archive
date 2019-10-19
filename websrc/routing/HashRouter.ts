@@ -14,8 +14,12 @@ export class HashRouter {
         return window.location.hash.length > 0;
     }
 
-    navigate(path: string[]) {
-        window.location.hash = path.join('/');
+    navigate(path: string[], replace: boolean = false) {
+        if(replace) {
+            location.replace(`#${path.join('/')}`);
+        } else {
+            window.location.hash = path.join('/');
+        }
     }
 
     /// Apply the routing logic to the currently set path.
