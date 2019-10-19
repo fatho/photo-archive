@@ -26,6 +26,9 @@ export class SldeshowPage implements Page, StateChangedListener {
                     that.previousPhoto();
                     evt.preventDefault();
                     break;
+                case "Escape":
+                    window.history.back();
+                    break;
             }
         };
 
