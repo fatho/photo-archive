@@ -8,7 +8,7 @@ edition = "2018"
 bit-set = "0.5.1"
 chrono = { version = "0.4.9", features = ["serde"] }
 directories = "2.0.2"
-lru = "0.2.0"
+lru = "0.7.1"
 num-derive = "0.3.0"
 num-traits = "0.2"
 walkdir = "2.2.9"
