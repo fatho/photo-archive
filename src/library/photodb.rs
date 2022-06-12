@@ -7,7 +7,7 @@ use log::debug;
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 use rusqlite::types::{FromSql, ToSql};
-use rusqlite::{OptionalExtension, Transaction, NO_PARAMS};
+use rusqlite::{OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
 
 use crate::database;
@@ -101,7 +101,7 @@ impl PhotoDatabase {
             .connection()
             .query_row(
                 "SELECT id, rel_path, created, file_hash FROM photos WHERE id = ?1",
-                &[id],
+                [id],
                 Self::map_photo_row,
             )
             .optional()
@@ -118,7 +118,7 @@ impl PhotoDatabase {
             .connection()
             .prepare("SELECT id FROM photos ORDER BY created DESC")?;
         let ls: rusqlite::Result<std::vec::Vec<PhotoId>> =
-            stmt.query_map(NO_PARAMS, |row| row.get(0))?.collect();
+            stmt.query_map([], |row| row.get(0))?.collect();
         ls.map_err(Into::into)
     }
 
@@ -128,12 +128,12 @@ impl PhotoDatabase {
             .connection()
             .prepare("SELECT id, rel_path, created, file_hash FROM photos ORDER BY created DESC")?;
         let ls: rusqlite::Result<Vec<Photo>> =
-            stmt.query_map(NO_PARAMS, Self::map_photo_row)?.collect();
+            stmt.query_map([], Self::map_photo_row)?.collect();
         ls.map_err(Into::into)
     }
 
     pub fn query_photo_count(&self) -> database::Result<u32> {
-        self.query_scalar("SELECT COUNT(*) FROM photos", NO_PARAMS)
+        self.query_scalar("SELECT COUNT(*) FROM photos", [])
     }
 
     fn map_photo_row(row: &rusqlite::Row) -> rusqlite::Result<Photo> {
@@ -165,7 +165,7 @@ impl PhotoDatabase {
 
         self.db.connection().execute(
             "INSERT INTO thumbnails(photo_id, thumbnail, error, hash) VALUES (?1, ?2, ?3, ?4) ON CONFLICT (photo_id) DO UPDATE SET thumbnail=?2, error=?3, hash=?4",
-            &[
+            [
                 &photo_id as &dyn ToSql,
                 &thumbnail_or_null,
                 &error_or_null,
@@ -178,7 +178,7 @@ impl PhotoDatabase {
     pub fn query_thumbnail_state(&self, photo_id: PhotoId) -> database::Result<ThumbnailState> {
         let has_thumbnail = self.query_scalar_optional(
             "SELECT thumbnail IS NOT NULL FROM thumbnails WHERE photo_id = ?1",
-            &[photo_id],
+            [photo_id],
         )?;
         Ok(match has_thumbnail {
             None => ThumbnailState::Absent,
@@ -194,7 +194,7 @@ impl PhotoDatabase {
         // TODO: return either thumbnail or the stored error
         self.query_scalar_optional(
             "SELECT thumbnail FROM thumbnails WHERE photo_id = ?1 AND thumbnail IS NOT NULL",
-            &[photo],
+            [photo],
         )
     }
 
@@ -202,22 +202,22 @@ impl PhotoDatabase {
     pub fn query_thumbnail_hash(&self, photo: PhotoId) -> database::Result<Option<Sha256Hash>> {
         self.query_scalar_optional(
             "SELECT hash FROM thumbnails WHERE photo_id = ?1 AND hash IS NOT NULL",
-            &[photo],
+            [photo],
         )
     }
 
     pub fn query_thumbnail_row_count(&self) -> database::Result<u32> {
-        self.query_scalar("SELECT COUNT(*) FROM thumbnails", NO_PARAMS)
+        self.query_scalar("SELECT COUNT(*) FROM thumbnails", [])
     }
 
     pub fn query_thumbnail_failed_count(&self) -> database::Result<u32> {
-        self.query_scalar("SELECT COUNT(*) FROM thumbnails WHERE error IS NOT NULL", NO_PARAMS)
+        self.query_scalar("SELECT COUNT(*) FROM thumbnails WHERE error IS NOT NULL", [])
     }
 
     pub fn query_thumbnail_infos(&self) -> database::Result<Vec<ThumbnailInfo>> {
         let rows = self.db.connection()
             .prepare("SELECT photo_id, length(thumbnail), hash, error, rel_path FROM thumbnails t INNER JOIN photos p ON p.id = t.photo_id")?
-            .query_map(NO_PARAMS, |row| Ok(ThumbnailInfo {
+            .query_map([], |row| Ok(ThumbnailInfo {
                 photo_id: row.get(0)?,
                 size_bytes: row.get::<_, Option<i64>>(1)?.map(|val| val as usize),
                 hash: row.get(2)?,
@@ -229,7 +229,7 @@ impl PhotoDatabase {
     }
 
     pub fn query_total_thumbnail_size(&self) -> database::Result<u64> {
-        self.query_scalar("SELECT COALESCE(SUM(LENGTH(thumbnail)), 0) FROM thumbnails WHERE thumbnail IS NOT NULL", NO_PARAMS)
+        self.query_scalar("SELECT COALESCE(SUM(LENGTH(thumbnail)), 0) FROM thumbnails WHERE thumbnail IS NOT NULL", [])
             .map(|size: i64| size as u64)
     }
 
@@ -237,15 +237,15 @@ impl PhotoDatabase {
     pub fn delete_all_thumbnails(&self) -> database::Result<()> {
         self.db
             .connection()
-            .execute("DELETE FROM thumbnails", NO_PARAMS)?;
+            .execute("DELETE FROM thumbnails", [])?;
         // We need to vacuum in order to reclaim the freed space
-        self.db.connection().execute("VACUUM", NO_PARAMS)?;
+        self.db.connection().execute("VACUUM", [])?;
         Ok(())
     }
 
     fn query_scalar<T, P>(&self, sql: &str, params: P) -> database::Result<T>
     where
-        P: IntoIterator,
+        P: IntoIterator + rusqlite::Params,
         P::Item: ToSql,
         T: FromSql,
     {
@@ -258,7 +258,7 @@ impl PhotoDatabase {
 
     fn query_scalar_optional<T, P>(&self, sql: &str, params: P) -> database::Result<Option<T>>
     where
-        P: IntoIterator,
+        P: IntoIterator + rusqlite::Params,
         P::Item: ToSql,
         T: FromSql,
     {
@@ -301,10 +301,10 @@ impl Schema for PhotoDbSchema {
                     rel_path         TEXT NOT NULL, -- Relative path to the library root. SQLite uses UTF-8 by default, which cannot represent all paths.
                     created          TEXT,          -- Time the photo was created
                     file_hash        BLOB NOT NULL  -- Hash of the photo file
-                    )", NO_PARAMS)?;
+                    )", [])?;
                 tx.execute(
                     "CREATE UNIQUE INDEX photos_rel_path_index ON photos(rel_path)",
-                    NO_PARAMS,
+                    [],
                 )?;
                 tx.execute(
                     "CREATE TABLE thumbnails(
@@ -315,7 +315,7 @@ impl Schema for PhotoDbSchema {
                     CONSTRAINT thumbnails_present_xor_error CHECK ((thumbnail IS NOT NULL) = (error IS NULL))
                     CONSTRAINT thumbnails_present_equiv_hash CHECK ((thumbnail IS NOT NULL) = (hash IS NOT NULL))
                     )",
-                    NO_PARAMS,
+                    [],
                 )?;
                 Ok(())
             }

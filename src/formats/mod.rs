@@ -1,6 +1,7 @@
 use rusqlite::types::{FromSql, ToSql};
 use std::fmt;
 use std::io;
+use std::io::Cursor;
 use std::path::Path;
 
 mod jpeg;
@@ -39,29 +40,29 @@ impl Sha256Hash {
 
     /// Compute the SHA-256 hash of a byte array.
     pub fn hash_bytes(bytes: &[u8]) -> Sha256Hash {
-        use sha2::digest::{FixedOutput, Input};
+        use sha2::digest::{FixedOutput, Digest};
         let mut hasher = sha2::Sha256::default();
-        hasher.input(bytes);
-        Sha256Hash::from_bytes(&hasher.fixed_result()).expect("SHA-256 is broken")
+        hasher.update(bytes);
+        Sha256Hash::from_bytes(&hasher.finalize_fixed()).expect("SHA-256 is broken")
     }
 
     /// Compute the SHA-256 hash of the given file.
     pub fn hash_file(filename: &Path) -> io::Result<Sha256Hash> {
         use io::Read;
-        use sha2::digest::{FixedOutput, Input};
+        use sha2::digest::{FixedOutput, Digest};
 
         let mut file = std::fs::File::open(filename)?;
         let mut file_hasher = sha2::Sha256::default();
         let mut buffer = [0; 4096];
         loop {
             let num_read = file.read(&mut buffer)?;
-            file_hasher.input(&buffer[0..num_read]);
+            file_hasher.update(&buffer[0..num_read]);
             if num_read < buffer.len() {
                 break;
             }
         }
         let file_hash =
-            Sha256Hash::from_bytes(&file_hasher.fixed_result()).expect("SHA-256 is broken");
+            Sha256Hash::from_bytes(&file_hasher.finalize_fixed()).expect("SHA-256 is broken");
         Ok(file_hash)
     }
 
@@ -126,7 +127,6 @@ impl Thumbnail {
         original_file: P,
         size: u32,
     ) -> Result<Thumbnail, failure::Error> {
-        use image::GenericImageView;
         let img = image::open(original_file)?;
 
         let width = img.width();
@@ -139,7 +139,7 @@ impl Thumbnail {
         };
 
         let mut jpg = std::vec::Vec::new();
-        new_img.write_to(&mut jpg, image::ImageOutputFormat::JPEG(90))?;
+        new_img.write_to(&mut Cursor::new(&mut jpg), image::ImageOutputFormat::Jpeg(90))?;
 
         Ok(Thumbnail(jpg))
     }

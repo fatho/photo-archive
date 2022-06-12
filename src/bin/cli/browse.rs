@@ -1,6 +1,7 @@
 //! Web server for browsing the photo collection.
 
 use crate::cli;
+use actix_web::web::Data;
 use actix_web::{web, App, HttpServer};
 use log::info;
 use photo_archive::library::{LibraryFiles, PhotoDatabase};
@@ -25,7 +26,7 @@ impl WebData {
 }
 
 /// Start a webserver for browsing the library.
-pub fn browse(
+pub async fn browse(
     _context: &mut cli::AppContext,
     library: &LibraryFiles,
     binds: &[String],
@@ -41,7 +42,7 @@ pub fn browse(
 
     let factory = HttpServer::new(move || {
         App::new()
-            .data(data.clone())
+            .app_data(Data::new(data.clone()))
             // REST API:
             .service(web::resource("/photos").route(web::get().to(handlers::photos_get)))
             .service(web::resource("/photos/{id}").route(web::get().to(handlers::photo_get)))
@@ -57,13 +58,13 @@ pub fn browse(
             .default_service(web::to(handlers::static_file_handler))
     });
     let factory = binds.iter().fold(Ok(factory), |factory, address| factory?.bind(address))?;
-    factory.run()?;
+    factory.run().await?;
 
     Ok(())
 }
 
 mod handlers {
-    use actix_web::{http, web, Responder};
+    use actix_web::{http, web, Responder, HttpResponse, HttpRequest};
     use failure::format_err;
     use log::{error};
     use photo_archive::formats::Sha256Hash;
@@ -141,27 +142,27 @@ mod handlers {
         content_type: &str,
         etag: Option<Sha256Hash>,
         data: web::Bytes,
-    ) -> web::HttpResponse {
+    ) -> HttpResponse {
         if req_etag.is_some() && req_etag == etag {
-            web::HttpResponse::NotModified().into()
+            HttpResponse::NotModified().into()
         } else {
             if let Some(etag) = etag {
-                // If the resource has an etag, send caching headers as well
-                web::HttpResponse::Ok()
+                // If the resource has an etag, send caching append_headers( as well)
+                HttpResponse::Ok()
                     .content_type(content_type)
-                    .header("Cache-Control", "private, max-age=3600")
-                    .header("ETag", format!("\"{}\"", etag))
+                    .append_header(("Cache-Control", "private, max-age=3600"))
+                    .append_header(("ETag", format!("\"{}\"", etag)))
                     .body(data)
             } else {
                 // Otherwise only send the data
-                web::HttpResponse::Ok()
+                HttpResponse::Ok()
                     .content_type(content_type)
                     .body(data)
             }
         }
     }
 
-    pub fn static_file_handler(data: web::Data<WebData>, request: web::HttpRequest) -> impl Responder {
+    pub async fn static_file_handler(data: web::Data<WebData>, request: HttpRequest) -> impl Responder {
         error_handler(|| {
             let request_etag = get_if_none_match_sha256(&request);
             let rewritten_path = match request.path() {
@@ -183,14 +184,14 @@ mod handlers {
                 };
                 Ok(static_response(request_etag, resource.content_type, Some(hash), contents))
             } else {
-                Ok(web::HttpResponse::NotFound()
+                Ok(HttpResponse::NotFound()
                     .content_type("application/json")
                     .json(ErrorResponse::from("Not found")))
             }
         })
     }
 
-    pub fn photos_get(data: web::Data<WebData>) -> impl Responder {
+    pub async fn photos_get(data: web::Data<WebData>) -> impl Responder {
         error_handler(|| {
             let photos = data.lock_photo_db().query_all_photos()?;
             let photo_objects = photos
@@ -202,18 +203,18 @@ mod handlers {
                 })
                 .collect::<Vec<_>>();
 
-            Ok(web::HttpResponse::Ok()
+            Ok(HttpResponse::Ok()
                 .content_type("application/json")
                 .json(photo_objects))
         })
     }
 
-    pub fn photo_get(data: web::Data<WebData>, info: web::Path<i64>) -> impl Responder {
+    pub async fn photo_get(data: web::Data<WebData>, info: web::Path<i64>) -> impl Responder {
         error_handler(|| {
             let photo = data.lock_photo_db().get_photo(PhotoId(*info))?;
 
             let response = if let Some(photo) = photo {
-                web::HttpResponse::Ok()
+                HttpResponse::Ok()
                     .content_type("application/json")
                     .json(PhotoObject {
                         id: photo.id,
@@ -221,7 +222,7 @@ mod handlers {
                         created: photo.info.created,
                     })
             } else {
-                web::HttpResponse::NotFound()
+                HttpResponse::NotFound()
                     .content_type("application/json")
                     .json(ErrorResponse::from("Photo not found"))
             };
@@ -229,8 +230,8 @@ mod handlers {
         })
     }
 
-    pub fn photo_original_get(
-        req: web::HttpRequest,
+    pub async fn photo_original_get(
+        req: HttpRequest,
         data: web::Data<WebData>,
         info: web::Path<i64>,
     ) -> impl Responder {
@@ -244,7 +245,7 @@ mod handlers {
                 if let Some(photo) = maybe_photo {
                     // early exit if the etag matches
                     if Some(&photo.info.file_hash) == etag_request.as_ref() {
-                        return Ok(web::HttpResponse::NotModified().into());
+                        return Ok(HttpResponse::NotModified().into());
                     }
                     // otherwise load the image file
                     let path = PhotoPath::from_relative(&data.photo_root, &photo.relative_path);
@@ -256,13 +257,13 @@ mod handlers {
             };
 
             let response = if let Some((image_data, etag, content_type)) = result {
-                web::HttpResponse::Ok()
+                HttpResponse::Ok()
                     .content_type(content_type)
-                    .header("ETag", format!("\"{}\"", etag))
-                    .header("Cache-Control", "private, max-age=3600")
+                    .append_header(("ETag", format!("\"{}\"", etag)))
+                    .append_header(("Cache-Control", "private, max-age=3600"))
                     .body(image_data)
             } else {
-                web::HttpResponse::NotFound()
+                HttpResponse::NotFound()
                     .content_type("application/json")
                     .json(ErrorResponse::from("Photo not found"))
             };
@@ -270,8 +271,8 @@ mod handlers {
         })
     }
 
-    pub fn photo_thumbnail_get(
-        req: web::HttpRequest,
+    pub async fn photo_thumbnail_get(
+        req: HttpRequest,
         data: web::Data<WebData>,
         info: web::Path<i64>,
     ) -> impl Responder {
@@ -285,7 +286,7 @@ mod handlers {
                 // early exit if the etag matches
                 if let Some(etag) = db.query_thumbnail_hash(photo_id)? {
                     if Some(etag) == etag_request {
-                        return Ok(web::HttpResponse::NotModified().into());
+                        return Ok(HttpResponse::NotModified().into());
                     }
                 }
                 // otherwise, get the thumbnail and send it
@@ -295,13 +296,13 @@ mod handlers {
             let response = if let Some(thumbnail) = thumbnail_result {
                 let etag =
                     etag_result.ok_or(format_err!("Thumbnail {:?} without hash", photo_id))?;
-                web::HttpResponse::Ok()
+                HttpResponse::Ok()
                     .content_type("image/jpeg")
-                    .header("ETag", format!("\"{}\"", etag))
-                    .header("Cache-Control", "private, max-age=3600")
+                    .append_header(("ETag", format!("\"{}\"", etag)))
+                    .append_header(("Cache-Control", "private, max-age=3600"))
                     .body(thumbnail.into_jpg_bytes())
             } else {
-                web::HttpResponse::NotFound()
+                HttpResponse::NotFound()
                     .content_type("application/json")
                     .json(ErrorResponse::from("This photo has no thumbnail"))
             };
@@ -309,21 +310,21 @@ mod handlers {
         })
     }
 
-    fn error_handler<F: FnOnce() -> Result<web::HttpResponse, failure::Error>>(
+    fn error_handler<F: FnOnce() -> Result<HttpResponse, failure::Error>>(
         callback: F,
-    ) -> web::HttpResponse {
+    ) -> HttpResponse {
         match callback() {
             Ok(response) => response,
             Err(err) => {
                 error!("Error while handling request: {}", err);
-                web::HttpResponse::build(http::StatusCode::INTERNAL_SERVER_ERROR)
+                HttpResponse::build(http::StatusCode::INTERNAL_SERVER_ERROR)
                     .content_type("application/json")
                     .json(ErrorResponse::from("internal server error"))
             }
         }
     }
 
-    fn get_if_none_match_sha256(req: &web::HttpRequest) -> Option<Sha256Hash> {
+    fn get_if_none_match_sha256(req: &HttpRequest) -> Option<Sha256Hash> {
         req.headers()
             .get("If-None-Match")
             .and_then(|value| value.as_bytes().get(1..65))

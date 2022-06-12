@@ -2,7 +2,7 @@
 
 use failure::Fail;
 use log::{debug, info};
-use rusqlite::{Connection, OptionalExtension, Transaction, NO_PARAMS};
+use rusqlite::{Connection, OptionalExtension, Transaction};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
@@ -52,7 +52,7 @@ where
         let mut conn = Connection::open(path)?;
 
         // set some sensible defaults
-        conn.execute("PRAGMA foreign_keys = ON", NO_PARAMS)?;
+        conn.execute("PRAGMA foreign_keys = ON", [])?;
 
         let current_version = Self::init_for_migrations(&mut conn)?;
         let schema = S::from_version(current_version).ok_or(Error::UnknownSchemaVersion {
@@ -99,10 +99,10 @@ where
 
         conn.execute(
             "CREATE TABLE IF NOT EXISTS version(version INTEGER)",
-            NO_PARAMS,
+            [],
         )?;
         let cur_version_opt = conn
-            .query_row("SELECT * FROM version", NO_PARAMS, |row| row.get(0))
+            .query_row("SELECT * FROM version", [], |row| row.get(0))
             .optional()?;
         let cur_version = match cur_version_opt {
             Some(version) => {
@@ -112,7 +112,7 @@ where
             None => {
                 debug!("Found blank database");
                 let version = Version(0);
-                conn.execute("INSERT INTO version(version) VALUES (?1)", &[version.0])?;
+                conn.execute("INSERT INTO version(version) VALUES (?1)", [version.0])?;
                 version
             }
         };
@@ -132,7 +132,7 @@ where
 
         let tx = self.conn.transaction()?;
         new_schema.run_upgrade(&tx)?;
-        tx.execute("UPDATE version SET version = ?1", &[target.0])?;
+        tx.execute("UPDATE version SET version = ?1", [target.0])?;
         tx.commit()?;
         self.schema = new_schema;
         Ok(())

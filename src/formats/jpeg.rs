@@ -32,7 +32,7 @@ impl ImageFormat for JpegFormat {
 
 fn read_exif_datetime(filename: &Path) -> Option<chrono::DateTime<chrono::Utc>> {
     let file = std::fs::File::open(filename).ok()?;
-    let exif_reader = exif::Reader::new(&mut std::io::BufReader::new(file))
+    let exif_reader = exif::Reader::new().read_from_container(&mut std::io::BufReader::new(file))
         .map(Some)
         .unwrap_or_else(|exif_err| {
             debug!(
@@ -43,8 +43,8 @@ fn read_exif_datetime(filename: &Path) -> Option<chrono::DateTime<chrono::Utc>> 
             None
         })?;
 
-    let created_exif = exif_reader.get_field(exif::Tag::DateTimeOriginal, false);
-    let digitized_exif = exif_reader.get_field(exif::Tag::DateTimeDigitized, false);
+    let created_exif = exif_reader.get_field(exif::Tag::DateTimeOriginal, exif::In::PRIMARY);
+    let digitized_exif = exif_reader.get_field(exif::Tag::DateTimeDigitized, exif::In::PRIMARY);
 
     created_exif
         .or(digitized_exif)

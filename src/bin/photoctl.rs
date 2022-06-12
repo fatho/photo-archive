@@ -187,6 +187,8 @@ fn run(opts: GlobalOpts, context: &mut cli::AppContext) -> Result<(), failure::E
             );
             Ok(())
         }
-        Command::Browse { bind, web_root } => cli::browse::browse(context, &library_files, &bind, web_root),
+        Command::Browse { bind, web_root } => {
+            actix_rt::System::new().block_on(cli::browse::browse(context, &library_files, &bind, web_root))
+        },
     }
 }
