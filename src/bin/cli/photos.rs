@@ -3,7 +3,7 @@
 use photo_archive::formats::{ImageFormat, JpegFormat};
 use photo_archive::library::{LibraryFiles, PhotoDatabase, PhotoId, PhotoPath};
 
-use failure::format_err;
+use anyhow::format_err;
 use log::{error, info, trace, warn};
 use rayon::prelude::*;
 use std::path::PathBuf;
@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use crate::cli;
 
 /// List all the photos in the database/
-pub fn list(context: &mut cli::AppContext, library: &LibraryFiles) -> Result<(), failure::Error> {
+pub fn list(context: &mut cli::AppContext, library: &LibraryFiles) -> Result<(), anyhow::Error> {
     use std::borrow::Cow;
 
     let photo_db = PhotoDatabase::open_or_create(&library.photo_db_file)?;
@@ -79,7 +79,7 @@ pub fn scan(
     library: &LibraryFiles,
     rescan: bool,
     paths: &[PathBuf],
-) -> Result<(), failure::Error> {
+) -> Result<(), anyhow::Error> {
     let photo_db = PhotoDatabase::open_or_create(&library.photo_db_file)?;
     let mut stats = ScanStatCollector::new();
 
@@ -104,7 +104,7 @@ pub fn scan(
     // Sequential implementation for when parallelism has been disabled
     files_to_scan
         .into_par_iter()
-        .map(|scan_job| -> Result<(), failure::Error> {
+        .map(|scan_job| -> Result<(), anyhow::Error> {
             context.check_interrupted()?;
 
             let scan_result = JpegFormat.read_info(&scan_job.path.full_path);
@@ -137,7 +137,7 @@ pub fn scan(
             progress_bar.sender().inc_progress(1);
             Ok(())
         })
-        .collect::<Result<(), failure::Error>>()?;
+        .collect::<Result<(), anyhow::Error>>()?;
 
     drop(progress_bar);
 
@@ -167,7 +167,7 @@ fn scan_collect(
     stats: &mut ScanStatCollector,
     rescan: bool,
     paths: &[PathBuf],
-) -> Result<Vec<ScanJob>, failure::Error> {
+) -> Result<Vec<ScanJob>, anyhow::Error> {
     paths
         .iter()
         // First collect all supported photo files from the supplied paths
@@ -206,7 +206,7 @@ fn scan_collect(
             }
         })
         // Then look up each of them in the database and create the ScanJob
-        .map(|filename| -> Result<Option<ScanJob>, failure::Error> {
+        .map(|filename| -> Result<Option<ScanJob>, anyhow::Error> {
             stats.inc_total();
             context.check_interrupted()?;
 

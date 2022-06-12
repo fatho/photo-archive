@@ -123,9 +123,9 @@ fn main() {
 }
 
 /// Dispatch work to other functions based on the program options that were given.
-/// In case of a failure, it returns an error.
+/// In case of a anyhow, it returns an error.
 /// Exit is not called and a Ctrl+C handler is installed.
-fn run(opts: GlobalOpts, context: &mut cli::AppContext) -> Result<(), failure::Error> {
+fn run(opts: GlobalOpts, context: &mut cli::AppContext) -> Result<(), anyhow::Error> {
     let photo_root = opts.photo_root.clone().unwrap_or_else(|| {
         let user_dirs = directories::UserDirs::new().expect("Cannot access user directories");
         let photo_path = user_dirs

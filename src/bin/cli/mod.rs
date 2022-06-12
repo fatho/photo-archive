@@ -3,7 +3,7 @@ use photo_archive::clone;
 use photo_archive::library::{LibraryFiles, PhotoDatabase};
 
 use crate::progresslog::ProgressLogger;
-use failure::bail;
+use anyhow::bail;
 use log::{info, warn};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -62,7 +62,7 @@ impl AppContext {
 
 /// Generate the database files.
 /// If overwrite is true, the old database files are renamed and a new database is created.
-pub fn init(files: &LibraryFiles, overwrite: bool) -> Result<(), failure::Error> {
+pub fn init(files: &LibraryFiles, overwrite: bool) -> Result<(), anyhow::Error> {
     if !files.root_exists() {
         bail!(
             "Library root directory {} not found",
@@ -86,7 +86,7 @@ pub fn init(files: &LibraryFiles, overwrite: bool) -> Result<(), failure::Error>
 }
 
 /// Display some general information about the photo database.
-pub fn status(library_files: &LibraryFiles) -> Result<(), failure::Error> {
+pub fn status(library_files: &LibraryFiles) -> Result<(), anyhow::Error> {
     let print_status = |name: &'static str, path: &Path, found: bool| {
         println!(
             "{}: {} ({})",

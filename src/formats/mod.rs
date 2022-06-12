@@ -126,7 +126,7 @@ impl Thumbnail {
     pub fn generate<P: AsRef<Path>>(
         original_file: P,
         size: u32,
-    ) -> Result<Thumbnail, failure::Error> {
+    ) -> Result<Thumbnail, anyhow::Error> {
         let img = image::open(original_file)?;
 
         let width = img.width();

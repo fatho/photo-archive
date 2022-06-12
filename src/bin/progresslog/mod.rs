@@ -59,7 +59,7 @@ impl Log for TermProgressLogger {
                 _ => level.blue(),
             };
 
-            // Ignore logging failures to stderr, as logging is not critical.
+            // Ignore logging anyhows to stderr, as logging is not critical.
             let _ = self.progress.with_hidden_progress(|| {
                 writeln!(
                     &self.term,

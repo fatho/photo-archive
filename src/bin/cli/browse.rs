@@ -31,7 +31,7 @@ pub async fn browse(
     library: &LibraryFiles,
     binds: &[String],
     web_root: Option<PathBuf>,
-) -> Result<(), failure::Error> {
+) -> Result<(), anyhow::Error> {
     let data = WebData {
         photo_root: library.root_dir.to_path_buf(),
         photo_db: Arc::new(Mutex::new(PhotoDatabase::open_or_create(&library.photo_db_file)?)),
@@ -65,7 +65,7 @@ pub async fn browse(
 
 mod handlers {
     use actix_web::{http, web, Responder, HttpResponse, HttpRequest};
-    use failure::format_err;
+    use anyhow::format_err;
     use log::{error};
     use photo_archive::formats::Sha256Hash;
     use photo_archive::library::{PhotoId, PhotoPath};
@@ -310,7 +310,7 @@ mod handlers {
         })
     }
 
-    fn error_handler<F: FnOnce() -> Result<HttpResponse, failure::Error>>(
+    fn error_handler<F: FnOnce() -> Result<HttpResponse, anyhow::Error>>(
         callback: F,
     ) -> HttpResponse {
         match callback() {

@@ -1,6 +1,6 @@
 //! Convenience wrapper around Rusqlite with some additional features such as migrations.
 
-use failure::Fail;
+use thiserror::Error;
 use log::{debug, info};
 use rusqlite::{Connection, OptionalExtension, Transaction};
 use std::path::{Path, PathBuf};
@@ -12,13 +12,13 @@ pub struct Database<S> {
     filename: PathBuf,
 }
 
-#[derive(Debug, Fail)]
+#[derive(Debug, Error)]
 pub enum Error {
-    #[fail(display = "Unknown schema {}", version)]
+    #[error("Unknown schema {version}")]
     UnknownSchemaVersion { version: Version },
 }
 
-pub type Result<T> = std::result::Result<T, failure::Error>;
+pub type Result<T> = std::result::Result<T, anyhow::Error>;
 
 #[derive(Debug, Copy, Clone, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Version(pub u32);

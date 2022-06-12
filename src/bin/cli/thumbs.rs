@@ -1,7 +1,7 @@
 //! CLI implementation for the thumbs subcommand.
 
 use crate::cli;
-use failure::format_err;
+use anyhow::format_err;
 use log::info;
 use photo_archive::formats;
 use photo_archive::library::{LibraryFiles, PhotoDatabase, ThumbnailState};
@@ -10,7 +10,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 /// List all thumbnails and show statistics.
-pub fn list(context: &mut cli::AppContext, library: &LibraryFiles, errors: bool) -> Result<(), failure::Error> {
+pub fn list(context: &mut cli::AppContext, library: &LibraryFiles, errors: bool) -> Result<(), anyhow::Error> {
     use std::fmt::Write;
 
     let db = PhotoDatabase::open_or_create(&library.photo_db_file)?;
@@ -54,7 +54,7 @@ pub fn list(context: &mut cli::AppContext, library: &LibraryFiles, errors: bool)
 }
 
 /// Remove all thumbnails
-pub fn delete(context: &mut cli::AppContext, library: &LibraryFiles) -> Result<(), failure::Error> {
+pub fn delete(context: &mut cli::AppContext, library: &LibraryFiles) -> Result<(), anyhow::Error> {
     let db = PhotoDatabase::open_or_create(&library.photo_db_file)?;
     context.check_interrupted()?;
 
@@ -70,7 +70,7 @@ pub fn generate(
     library: &LibraryFiles,
     regenerate: bool,
     retry_failed: bool,
-) -> Result<(), failure::Error> {
+) -> Result<(), anyhow::Error> {
     let photo_db = PhotoDatabase::open_or_create(&library.photo_db_file)?;
 
     let all_photos = photo_db.query_all_photo_ids()?;
@@ -125,7 +125,7 @@ pub fn generate(
                 .map_err(|_| format_err!("Database mutex was poisoned"))?
                 .insert_thumbnail(photo.id, &thumbnail_result)
         })
-        .collect::<Result<(), failure::Error>>()?;
+        .collect::<Result<(), anyhow::Error>>()?;
 
     drop(progress_bar);
     context.check_interrupted()?;
